@@ -38,6 +38,7 @@ type UDPPortForwarder struct {
 	remotePort    uint16
 	sourceAddr    *net.UDPAddr
 	waitGroupAcks *sync.WaitGroup
+	proto         ws.ProtoType
 }
 
 func NewUDPPortForwarder(
@@ -45,6 +46,7 @@ func NewUDPPortForwarder(
 	localPort uint16,
 	remoteHost string,
 	remotePort uint16,
+	proto ws.ProtoType,
 ) (*UDPPortForwarder, error) {
 	fmt.Printf(
 		"Forwarding from udp/%s:%d -> udp/%s:%d\n",
@@ -62,6 +64,7 @@ func NewUDPPortForwarder(
 		return nil, err
 	}
 	return &UDPPortForwarder{
+		proto:         proto,
 		conn:          conn,
 		remoteHost:    remoteHost,
 		remotePort:    remotePort,
@@ -96,7 +99,7 @@ func (p *UDPPortForwarder) Run(
 	}
 	m := &ws.ProtoMsg{
 		Header: ws.ProtoHdr{
-			Proto:     ws.ProtoTypePortForward,
+			Proto:     p.proto,
 			MsgType:   wspf.MessageTypePortForwardNew,
 			SessionID: sessionID,
 			Properties: map[string]interface{}{
@@ -112,7 +115,7 @@ func (p *UDPPortForwarder) Run(
 		if sendStopMessage {
 			m := &ws.ProtoMsg{
 				Header: ws.ProtoHdr{
-					Proto:     ws.ProtoTypePortForward,
+					Proto:     p.proto,
 					MsgType:   wspf.MessageTypePortForwardStop,
 					SessionID: sessionID,
 					Properties: map[string]interface{}{
@@ -135,20 +138,20 @@ func (p *UDPPortForwarder) Run(
 		for {
 			select {
 			case m := <-recvChan:
-				if m.Header.Proto == ws.ProtoTypePortForward &&
+				if m.Header.Proto == p.proto &&
 					m.Header.MsgType == wspf.MessageTypePortForwardStop {
 					sendStopMessage = false
 					return
-				} else if m.Header.Proto == ws.ProtoTypePortForward &&
+				} else if m.Header.Proto == p.proto &&
 					m.Header.MsgType == wspf.MessageTypePortForward {
 					_, err := p.conn.WriteToUDP(m.Body, p.sourceAddr)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "error: %v\n", err.Error())
-					} else {
+					} else if p.proto == ws.ProtoTypePortForward {
 						// send the ack
 						m := &ws.ProtoMsg{
 							Header: ws.ProtoHdr{
-								Proto:     ws.ProtoTypePortForward,
+								Proto:     p.proto,
 								MsgType:   wspf.MessageTypePortForwardAck,
 								SessionID: sessionID,
 								Properties: map[string]interface{}{
@@ -177,15 +180,17 @@ func (p *UDPPortForwarder) Run(
 			}
 			return
 		case data := <-dataChan:
-			// wait to receive all the previous acks
-			p.waitGroupAcks.Wait()
+			if p.proto == ws.ProtoTypePortForward {
+				// wait to receive all the previous acks
+				p.waitGroupAcks.Wait()
 
-			// add an expected ack to the wait group
-			p.waitGroupAcks.Add(1)
+				// add an expected ack to the wait group
+				p.waitGroupAcks.Add(1)
+			}
 
 			m := &ws.ProtoMsg{
 				Header: ws.ProtoHdr{
-					Proto:     ws.ProtoTypePortForward,
+					Proto:     p.proto,
 					MsgType:   wspf.MessageTypePortForward,
 					SessionID: sessionID,
 					Properties: map[string]interface{}{

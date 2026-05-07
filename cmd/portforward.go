@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/mendersoftware/mender-cli/client/deviceconnect"
+	"github.com/mendersoftware/mender-cli/log"
 )
 
 const (
@@ -87,6 +89,7 @@ type portMapping struct {
 
 // PortForwardCmd handles the port-forward command
 type PortForwardCmd struct {
+	proto        ws.ProtoType
 	server       string
 	token        string
 	skipVerify   bool
@@ -235,14 +238,14 @@ func (c *PortForwardCmd) run() error {
 		switch portMapping.Protocol {
 		case protocolTCP:
 			forwarder, err := NewTCPPortForwarder(c.bindingHost, portMapping.LocalPort,
-				portMapping.RemoteHost, portMapping.RemotePort)
+				portMapping.RemoteHost, portMapping.RemotePort, c.proto)
 			if err != nil {
 				return err
 			}
 			go forwarder.Run(ctx, c.sessionID, msgChan, c.recvChans)
 		case protocolUDP:
 			forwarder, err := NewUDPPortForwarder(c.bindingHost, portMapping.LocalPort,
-				portMapping.RemoteHost, portMapping.RemotePort)
+				portMapping.RemoteHost, portMapping.RemotePort, c.proto)
 			if err != nil {
 				return err
 			}
@@ -268,8 +271,11 @@ func (c *PortForwardCmd) run() error {
 			err := client.WriteMessage(msg)
 			if err != nil {
 				c.err = err
-				break
+				c.running = false
 			}
+		case <-ctx.Done():
+			c.err = ctx.Err()
+			c.running = false
 		case <-time.After(time.Until(timeout)):
 			c.err = errors.New("port forward timed out: max duration reached")
 			c.running = false
@@ -342,15 +348,11 @@ func (c *PortForwardCmd) handshake(client *deviceconnect.Client) error {
 	if err != nil {
 		return err
 	}
-
-	found := false
-	for _, proto := range accept.Protocols {
-		if proto == ws.ProtoTypePortForward {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if slices.Contains(accept.Protocols, ws.ProtoTypePortForwardV2) {
+		c.proto = ws.ProtoTypePortForwardV2
+	} else if slices.Contains(accept.Protocols, ws.ProtoTypePortForward) {
+		c.proto = ws.ProtoTypePortForward
+	} else {
 		return errPortForwardNotImplemented
 	}
 
@@ -382,39 +384,70 @@ func (c *PortForwardCmd) processIncomingMessages(
 		m, err := client.ReadMessage()
 		if err != nil {
 			c.err = err
+			c.running = false
 			c.Stop()
 			break
-		} else if m.Header.Proto == ws.ProtoTypeControl && m.Header.MsgType == ws.MessageTypePing {
-			m := &ws.ProtoMsg{
-				Header: ws.ProtoHdr{
-					Proto:     ws.ProtoTypeControl,
-					MsgType:   ws.MessageTypePong,
-					SessionID: c.sessionID,
-				},
-			}
-			msgChan <- m
-		} else if m.Header.Proto == ws.ProtoTypePortForward &&
-			m.Header.MsgType == ws.MessageTypeError {
-			erro := new(ws.Error)
-			if err := msgpack.Unmarshal(m.Body, erro); err != nil &&
-				erro.MessageType != wspf.MessageTypePortForwardStop {
-				c.err = errors.New(fmt.Sprintf(
-					"Unable to start the port-forwarding: %s",
-					string(m.Body),
-				))
+		}
+		switch m.Header.Proto {
+		case ws.ProtoTypeControl:
+			if m.Header.MsgType == ws.MessageTypePing {
+				m := &ws.ProtoMsg{
+					Header: ws.ProtoHdr{
+						Proto:     ws.ProtoTypeControl,
+						MsgType:   ws.MessageTypePong,
+						SessionID: c.sessionID,
+					},
+				}
+				msgChan <- m
+			} else {
+				c.err = fmt.Errorf("invalid message type control/%s", m.Header.MsgType)
+				log.Err(c.err.Error())
 				c.running = false
 				c.Stop()
 			}
-		} else if m.Header.Proto == ws.ProtoTypePortForward &&
-			(m.Header.MsgType == wspf.MessageTypePortForward ||
-				m.Header.MsgType == wspf.MessageTypePortForwardAck ||
-				m.Header.MsgType == wspf.MessageTypePortForwardStop) {
-			connectionID, _ := m.Header.Properties[wspf.PropertyConnectionID].(string)
-			if connectionID != "" {
-				if recvChan, ok := c.recvChans[connectionID]; ok {
-					recvChan <- m
+		case c.proto:
+			switch m.Header.MsgType {
+			case wspf.MessageTypeError:
+				erro := new(ws.Error)
+				if err := msgpack.Unmarshal(m.Body, erro); err != nil &&
+					erro.MessageType != wspf.MessageTypePortForwardStop {
+					c.err = errors.New(fmt.Sprintf(
+						"Unable to start the port-forwarding: %s",
+						string(m.Body),
+					))
+					c.running = false
+					c.Stop()
 				}
+			case wspf.MessageTypePortForwardAck:
+				if c.proto == ws.ProtoTypePortForwardV2 {
+					c.err = fmt.Errorf("invalid message type %s", m.Header.MsgType)
+					c.running = false
+					c.Stop()
+					break
+				}
+				fallthrough
+			case wspf.MessageTypePortForward,
+				wspf.MessageTypePortForwardStop,
+				wspf.MessageTypePortForwardNew:
+				connectionID, _ := m.Header.Properties[wspf.PropertyConnectionID].(string)
+				if connectionID != "" {
+					if recvChan, ok := c.recvChans[connectionID]; ok {
+						recvChan <- m
+					}
+				}
+
+			default:
+				c.err = fmt.Errorf("invalid message type %s", m.Header.MsgType)
+				log.Err(c.err.Error())
+				c.running = false
+				c.Stop()
 			}
+		default:
+			c.err = fmt.Errorf("invalid protocol ID %d", m.Header.Proto)
+			log.Err(c.err.Error())
+			c.running = false
+			c.Stop()
+
 		}
 	}
 }

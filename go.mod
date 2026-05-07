@@ -7,7 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef
-	github.com/mendersoftware/go-lib-micro v0.0.0-20221025103319-e1f941fb3145
+	github.com/mendersoftware/go-lib-micro v0.0.0-20260507072508-a0998f726f15
 	github.com/mendersoftware/mender-artifact v0.0.0-20250529094801-7264a90f1074
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.10.2
@@ -26,7 +26,7 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
-	github.com/klauspost/cpuid/v2 v2.2.3 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
