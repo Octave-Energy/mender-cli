@@ -13,6 +13,6 @@ WORKDIR /tests
 ENTRYPOINT ["python3", "-m", "pytest"]
 CMD ["tests"]
 
-FROM busybox:1.37.0
+FROM busybox:1.38.0
 COPY --from=builder /mender-cli /usr/bin/
 ENTRYPOINT ["/usr/bin/mender-cli"]
