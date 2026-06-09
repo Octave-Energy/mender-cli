@@ -26,17 +26,17 @@ jobs:
     name: Tag, build & publish release artifacts
     runs-on: ubuntu-latest
     steps:
-      - name: Ensure release runs from main
+      - name: Ensure release runs from master
         run: |
-          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-            echo "::error::Releases can only be run from the 'main' branch (got '${GITHUB_REF_NAME}')."
+          if [ "${GITHUB_REF}" != "refs/heads/master" ]; then
+            echo "::error::Releases can only be run from the 'master' branch (got '${GITHUB_REF_NAME}')."
             exit 1
           fi
 
       - name: Check out code
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: master
           # Full history + tags so we can compute the next version and stamp it.
           fetch-depth: 0
           fetch-tags: true

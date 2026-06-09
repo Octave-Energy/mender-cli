@@ -3,7 +3,6 @@ run-name: "CI · ${{ github.event_name }} on ${{ github.head_ref || github.ref_n
 
 on:
   push:
-    branches: [master, main]
   pull_request:
 
 permissions:
