@@ -33,6 +33,8 @@ var tokenClearCmd = &cobra.Command{
 	Long: "Delete the locally stored authentication token. By default an " +
 		"interactive confirmation is required; use --yes to skip it. In " +
 		"non-interactive contexts --yes is mandatory.",
+	Example: `  mender-cli token clear
+  mender-cli token clear --yes`,
 	Run: func(c *cobra.Command, args []string) {
 		yes, err := c.Flags().GetBool(argTokenClearYes)
 		CheckErr(err)

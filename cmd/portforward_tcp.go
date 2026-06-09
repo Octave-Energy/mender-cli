@@ -28,7 +28,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mendersoftware/go-lib-micro/ws"
-	"github.com/mendersoftware/go-lib-micro/ws/portforward"
 	wspf "github.com/mendersoftware/go-lib-micro/ws/portforward"
 	"github.com/vmihailenco/msgpack"
 )
@@ -86,7 +85,12 @@ func (p *TCPPortForwarder) Run(
 				conn.RemoteAddr().String(),
 				conn.LocalAddr().String(),
 			)
-			acceptedConnections <- conn
+			select {
+			case acceptedConnections <- conn:
+			case <-ctx.Done():
+				conn.Close()
+				return
+			}
 		}
 	}()
 
@@ -133,7 +137,7 @@ func (p *TCPPortForwarder) handleDeviceMessages(
 				wspf.MessageTypePortForward:
 				_, err := conn.Write(m.Body)
 				if err != nil {
-					if errors.Unwrap(err) != net.ErrClosed {
+					if !errors.Is(err, net.ErrClosed) {
 						fmt.Fprintf(os.Stderr, "error: %v\n", err.Error())
 					}
 				} else if p.proto == ws.ProtoTypePortForward {
@@ -143,7 +147,7 @@ func (p *TCPPortForwarder) handleDeviceMessages(
 							Proto:     ws.ProtoTypePortForward,
 							MsgType:   wspf.MessageTypePortForwardAck,
 							SessionID: sessionID,
-							Properties: map[string]interface{}{
+							Properties: map[string]any{
 								wspf.PropertyConnectionID: connectionID,
 							},
 						},
@@ -187,7 +191,7 @@ func (p *TCPPortForwarder) handleRequest(
 	errChan := make(chan error)
 	dataChan := make(chan []byte)
 
-	protocol := portforward.PortForwardProtocol(wspf.PortForwardProtocolTCP)
+	protocol := wspf.PortForwardProtocol(wspf.PortForwardProtocolTCP)
 	portforwardNew := &wspf.PortForwardNew{
 		Protocol:   &protocol,
 		RemoteHost: &p.remoteHost,
@@ -196,14 +200,14 @@ func (p *TCPPortForwarder) handleRequest(
 	body, err := msgpack.Marshal(portforwardNew)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err.Error())
-		panic(err)
+		return
 	}
 	m := &ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:     p.proto,
 			MsgType:   wspf.MessageTypePortForwardNew,
 			SessionID: sessionID,
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				wspf.PropertyConnectionID: connectionID,
 			},
 		},
@@ -220,7 +224,7 @@ func (p *TCPPortForwarder) handleRequest(
 					Proto:     p.proto,
 					MsgType:   wspf.MessageTypePortForwardStop,
 					SessionID: sessionID,
-					Properties: map[string]interface{}{
+					Properties: map[string]any{
 						wspf.PropertyConnectionID: connectionID,
 					},
 				},
@@ -254,7 +258,7 @@ func (p *TCPPortForwarder) handleRequest(
 					Proto:     p.proto,
 					MsgType:   wspf.MessageTypePortForward,
 					SessionID: sessionID,
-					Properties: map[string]interface{}{
+					Properties: map[string]any{
 						wspf.PropertyConnectionID: connectionID,
 					},
 				},

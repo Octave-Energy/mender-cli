@@ -18,7 +18,7 @@ import "github.com/spf13/cobra"
 // tokenCmd is the parent for token-management subcommands.
 var tokenCmd = &cobra.Command{
 	Use:   "token",
-	Short: "Manage the locally stored authentication token",
+	Short: "Manage the locally stored authentication token.",
 	Long: "Manage the locally stored authentication token (e.g. a Personal " +
 		"Access Token) without needing to know the on-disk storage location.",
 }

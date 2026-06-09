@@ -11,6 +11,10 @@
 //	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //	See the License for the specific language governing permissions and
 //	limitations under the License.
+
+// Package client provides shared HTTP helpers used by the Mender API client
+// packages, including a configurable HTTP client and basic GET/POST request
+// helpers.
 package client
 
 import (
@@ -21,8 +25,6 @@ import (
 	"net/http/httputil"
 	"strings"
 
-	"github.com/pkg/errors"
-
 	"github.com/mendersoftware/mender-cli/log"
 )
 
@@ -30,7 +32,9 @@ const (
 	httpErrorBoundary = 300
 )
 
-func NewHttpClient(skipVerify bool) *http.Client {
+// NewHTTPClient returns an *http.Client configured for talking to the Mender
+// server. When skipVerify is true, TLS certificate verification is disabled.
+func NewHTTPClient(skipVerify bool) *http.Client {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipVerify},
 	}
@@ -40,6 +44,7 @@ func NewHttpClient(skipVerify bool) *http.Client {
 	}
 }
 
+// JoinURL joins a base URL and a path, ensuring exactly one slash between them.
 func JoinURL(base, url string) string {
 	url = strings.TrimPrefix(url, "/")
 	if !strings.HasSuffix(base, "/") {
@@ -48,12 +53,15 @@ func JoinURL(base, url string) string {
 	return base + url
 }
 
+// DoGetRequest performs an authenticated GET request to urlPath and returns the
+// response body. It returns an error if the request fails or the server
+// responds with a non-200 status.
 func DoGetRequest(token, urlPath string, client *http.Client) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, urlPath, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create HTTP request")
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+string(token))
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	reqDump, err := httputil.DumpRequest(req, false)
 	if err != nil {
@@ -63,10 +71,10 @@ func DoGetRequest(token, urlPath string, client *http.Client) ([]byte, error) {
 
 	rsp, err := client.Do(req)
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("Get %s request failed", urlPath))
+		return nil, fmt.Errorf("GET %s request failed: %w", urlPath, err)
 	}
-	if rsp.StatusCode != 200 {
-		return nil, fmt.Errorf("Get %s request failed with status %d\n", urlPath, rsp.StatusCode)
+	if rsp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s request failed with status %d", urlPath, rsp.StatusCode)
 	}
 
 	defer rsp.Body.Close()
@@ -79,6 +87,9 @@ func DoGetRequest(token, urlPath string, client *http.Client) ([]byte, error) {
 	return body, nil
 }
 
+// DoPostRequest performs an authenticated JSON POST request to urlPath with the
+// given body and returns the response body. It returns an error if the request
+// fails or the server responds with a status above the error boundary.
 func DoPostRequest(
 	token, urlPath string,
 	client *http.Client,
@@ -86,9 +97,9 @@ func DoPostRequest(
 ) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodPost, urlPath, requestBody)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to create HTTP request")
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+string(token))
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json; charset=UTF-8")
 
 	reqDump, err := httputil.DumpRequest(req, false)
@@ -99,10 +110,10 @@ func DoPostRequest(
 
 	rsp, err := client.Do(req)
 	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("Post %s request failed", urlPath))
+		return nil, fmt.Errorf("POST %s request failed: %w", urlPath, err)
 	}
 	if rsp.StatusCode > httpErrorBoundary {
-		return nil, fmt.Errorf("Post %s request failed with status %d\n", urlPath, rsp.StatusCode)
+		return nil, fmt.Errorf("POST %s request failed with status %d", urlPath, rsp.StatusCode)
 	}
 
 	defer rsp.Body.Close()

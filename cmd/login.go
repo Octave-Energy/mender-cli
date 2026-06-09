@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/howeyc/gopass"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
@@ -37,6 +36,9 @@ const (
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Log in to the Mender server (required before other operations).",
+	Example: `  mender-cli --server https://hosted.mender.io login --username me@example.com
+  mender-cli login --username me@example.com --password secret
+  mender-cli login --username me@example.com --2fa-code 123456`,
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewLoginCmd(c, args)
 		CheckErr(err)
@@ -53,6 +55,7 @@ func init() {
 	_ = viper.BindPFlag(argLoginPassword, loginCmd.Flags().Lookup(argLoginPassword))
 }
 
+// LoginCmd implements `mender-cli login`.
 type LoginCmd struct {
 	server     string
 	skipVerify bool
@@ -62,13 +65,9 @@ type LoginCmd struct {
 	tokenPath  string
 }
 
+// NewLoginCmd validates flags and returns a new LoginCmd.
 func NewLoginCmd(cmd *cobra.Command, args []string) (*LoginCmd, error) {
-	server := viper.GetString(argRootServer)
-	if server == "" {
-		return nil, errors.New("No server, this should not happen")
-	}
-
-	skipVerify, err := cmd.Flags().GetBool(argRootSkipVerify)
+	server, skipVerify, err := resolveServerConfig(cmd)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,10 @@
 //	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //	See the License for the specific language governing permissions and
 //	limitations under the License.
+
+// Package log provides a thin leveled logging wrapper around the standard
+// library slog package used throughout mender-cli. Output is written to
+// standard error and the verbosity can be raised with Setup.
 package log
 
 import (
@@ -28,6 +32,8 @@ var (
 	)
 )
 
+// Setup configures the global logger. When verb is true, debug-level
+// (verbose) messages are emitted in addition to the default info level.
 func Setup(verb bool) {
 	if verb {
 		logOpts.Level = slog.LevelDebug
@@ -35,26 +41,32 @@ func Setup(verb bool) {
 	}
 }
 
+// Err logs msg at the error level.
 func Err(msg string) {
 	logger.Error(msg)
 }
 
-func Errf(msg string, args ...interface{}) {
+// Errf logs a printf-style formatted message at the error level.
+func Errf(msg string, args ...any) {
 	logger.Error(fmt.Sprintf(msg, args...))
 }
 
+// Verb logs msg at the debug (verbose) level.
 func Verb(msg string) {
 	logger.Debug(msg)
 }
 
-func Verbf(msg string, args ...interface{}) {
+// Verbf logs a printf-style formatted message at the debug (verbose) level.
+func Verbf(msg string, args ...any) {
 	logger.Debug(fmt.Sprintf(msg, args...))
 }
 
+// Info logs msg at the info level.
 func Info(msg string) {
 	logger.Info(msg)
 }
 
-func Infof(msg string, args ...interface{}) {
+// Infof logs a printf-style formatted message at the info level.
+func Infof(msg string, args ...any) {
 	logger.Info(fmt.Sprintf(msg, args...))
 }

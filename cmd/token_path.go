@@ -25,6 +25,7 @@ var tokenPathCmd = &cobra.Command{
 	Long: "Print the absolute filesystem path where mender-cli stores the " +
 		"authentication token by default. This always reflects the default " +
 		"platform-specific location and ignores any --token override.",
+	Example: `  mender-cli token path`,
 	Run: func(c *cobra.Command, args []string) {
 		path, err := getDefaultAuthTokenPath()
 		CheckErr(err)

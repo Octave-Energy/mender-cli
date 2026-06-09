@@ -5,13 +5,26 @@ PKGFILES = $(shell find . \( -path ./vendor -o -path ./Godeps \) -prune \
 		-o -type f -name '*.go' -print)
 PKGFILES_notest = $(shell echo $(PKGFILES) | tr ' ' '\n' | grep -v _test.go)
 
+GOLANGCI_LINT ?= golangci-lint
+
 GO_TEST_TOOLS = \
-	github.com/opennota/check/cmd/varcheck
+	github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 
 VERSION = $(shell git describe --tags --dirty --exact-match 2>/dev/null || git rev-parse --short HEAD)
+REVISION = $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BRANCH = $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+BUILD_DATE = $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+BUILD_USER = $(shell id -un 2>/dev/null || echo unknown)@$(shell hostname 2>/dev/null || echo unknown)
 
+VERSION_PKG = github.com/mendersoftware/mender-cli/cmd
 GO_LDFLAGS = \
-	-ldflags "-X github.com/mendersoftware/mender-cli/cmd.Version=$(VERSION)"
+	-ldflags " \
+		-X $(VERSION_PKG).Version=$(VERSION) \
+		-X $(VERSION_PKG).Revision=$(REVISION) \
+		-X $(VERSION_PKG).Branch=$(BRANCH) \
+		-X $(VERSION_PKG).BuildDate=$(BUILD_DATE) \
+		-X $(VERSION_PKG).BuildUser=$(BUILD_USER) \
+		-X $(VERSION_PKG).Tags=$(GO_TAGS_CSV)"
 BUILDFLAGS ?=
 
 ifeq ($(V),1)
@@ -23,11 +36,15 @@ ifeq ($(LOCAL),1)
 TAGS += local
 endif
 
-ifneq ($(TAGS),)
-BUILDTAGS = -tags 'nopkcs11 $(TAGS)'
-else
-BUILDTAGS = -tags 'nopkcs11'
-endif
+# Full list of build tags as space- and comma-separated forms. The CSV form is
+# embedded into the binary (a space would break the -X linker flag).
+empty :=
+space := $(empty) $(empty)
+comma := ,
+GO_TAGS = $(strip nopkcs11 $(TAGS))
+GO_TAGS_CSV = $(subst $(space),$(comma),$(GO_TAGS))
+
+BUILDTAGS = -tags '$(GO_TAGS)'
 
 build:
 	CGO_ENABLED=0 $(GO) build $(BUILDFLAGS) $(GO_LDFLAGS) $(BUILDV) $(BUILDTAGS)
@@ -38,8 +55,16 @@ build-autocomplete-scripts: build
 build-multiplatform:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(BUILDTAGS) $(GO_LDFLAGS) $(BUILDV) $(BUILDFLAGS) \
 	     -o mender-cli.linux.amd64
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(BUILDTAGS) $(GO_LDFLAGS) $(BUILDV) $(BUILDFLAGS) \
+	     -o mender-cli.linux.arm64
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build $(BUILDTAGS) $(GO_LDFLAGS) $(BUILDV) $(BUILDFLAGS) \
 	     -o mender-cli.darwin.amd64
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build $(BUILDTAGS) $(GO_LDFLAGS) $(BUILDV) $(BUILDFLAGS) \
+	     -o mender-cli.darwin.arm64
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build $(BUILDTAGS) $(GO_LDFLAGS) $(BUILDV) $(BUILDFLAGS) \
+	     -o mender-cli.windows.amd64.exe
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build $(BUILDTAGS) $(GO_LDFLAGS) $(BUILDV) $(BUILDFLAGS) \
+	     -o mender-cli.windows.arm64.exe
 
 build-coverage:
 	CGO_ENABLED=0 $(GO) build -cover -o mender-cli-test \
@@ -64,8 +89,8 @@ clean:
 
 get-go-tools:
 	set -e ; for t in $(GO_TEST_TOOLS); do \
-		echo "-- go getting $$t"; \
-		GO111MODULE=off go get -u $$t; \
+		echo "-- installing $$t"; \
+		$(GO) install $$t; \
 	done
 
 get-build-deps:
@@ -75,7 +100,7 @@ get-build-deps:
 get-deps: get-go-tools get-build-deps
 
 test-unit:
-	$(GO) test $(BUILDV) $(PKGS)
+	CGO_ENABLED=0 $(GO) test $(BUILDTAGS) $(BUILDV) $(PKGS)
 
 build-acceptance:
 	docker compose -f tests/acceptance/docker-compose.yml build acceptance $(BUILDFLAGS)
@@ -83,9 +108,28 @@ build-acceptance:
 run-acceptance:
 	docker compose -f tests/acceptance/docker-compose.yml run acceptance
 
-test-static:
-	echo "-- checking with varcheck"
-	varcheck .
+gofmt-check:
+	@echo "-- checking formatting with gofmt"
+	@if [ -n "$$(gofmt -l $(PKGFILES))" ]; then \
+		echo "the following files are not gofmt-compliant; run 'gofmt -w':"; \
+		gofmt -l $(PKGFILES); \
+		exit 1; \
+	fi
+
+vet:
+	@echo "-- checking with go vet"
+	CGO_ENABLED=0 $(GO) vet $(BUILDTAGS) $(PKGS)
+
+lint:
+	@echo "-- checking with golangci-lint"
+	@command -v $(GOLANGCI_LINT) >/dev/null 2>&1 || { \
+		echo "$(GOLANGCI_LINT) not found; install it with 'make get-go-tools'" \
+			"or see https://golangci-lint.run/welcome/install/"; \
+		exit 1; \
+	}
+	$(GOLANGCI_LINT) run
+
+test-static: gofmt-check vet lint
 
 cover: coverage
 	$(GO) tool cover -func=coverage.txt
@@ -98,7 +142,7 @@ coverage:
 	echo 'mode: set' > coverage.txt
 	set -e ; for p in $(PKGS); do \
 		rm -f coverage-tmp.txt;  \
-		$(GO) test -coverprofile=coverage-tmp.txt $$p ; \
+		CGO_ENABLED=0 $(GO) test $(BUILDTAGS) -coverprofile=coverage-tmp.txt $$p ; \
 		if [ -f coverage-tmp.txt ]; then \
 			cat coverage-tmp.txt | grep -v 'mode:' >> coverage.txt || /bin/true; \
 		fi; \
@@ -106,4 +150,4 @@ coverage:
 	rm -f coverage-tmp.txt
 
 .PHONY: build clean get-go-tools get-apt-deps get-deps test check \
-	cover htmlcover coverage
+	cover htmlcover coverage test-unit test-static gofmt-check vet lint

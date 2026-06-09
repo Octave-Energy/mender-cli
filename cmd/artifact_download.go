@@ -14,10 +14,7 @@
 package cmd
 
 import (
-	"github.com/pkg/errors"
-
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/mendersoftware/mender-cli/client/deployments"
 	"github.com/mendersoftware/mender-cli/log"
@@ -28,8 +25,11 @@ const (
 )
 
 var artifactDownloadCmd = &cobra.Command{
-	Use:   "download [flags] ARTIFACT",
+	Use:   "download [flags] ARTIFACT_ID",
 	Short: "Download mender artifact from the Mender server.",
+	Args:  cobra.ExactArgs(1),
+	Example: `  mender-cli artifacts download 0123456789abcdef0123456789abcdef
+  mender-cli artifacts download 0123456789abcdef0123456789abcdef --destination-path ./downloads`,
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewArtifactDownloadCmd(c, args)
 		CheckErr(err)
@@ -44,6 +44,7 @@ func init() {
 		"disable progress bar")
 }
 
+// ArtifactDownloadCmd implements `mender-cli artifacts download`.
 type ArtifactDownloadCmd struct {
 	server          string
 	skipVerify      bool
@@ -53,13 +54,9 @@ type ArtifactDownloadCmd struct {
 	withoutProgress bool
 }
 
+// NewArtifactDownloadCmd validates flags/args and returns a new ArtifactDownloadCmd.
 func NewArtifactDownloadCmd(cmd *cobra.Command, args []string) (*ArtifactDownloadCmd, error) {
-	server := viper.GetString(argRootServer)
-	if server == "" {
-		return nil, errors.New("No server")
-	}
-
-	skipVerify, err := cmd.Flags().GetBool(argRootSkipVerify)
+	server, skipVerify, err := resolveServerConfig(cmd)
 	if err != nil {
 		return nil, err
 	}

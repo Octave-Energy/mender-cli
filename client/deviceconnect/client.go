@@ -11,6 +11,10 @@
 //	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //	See the License for the specific language governing permissions and
 //	limitations under the License.
+
+// Package deviceconnect provides a client for the Mender deviceconnect API. It
+// manages the websocket session used for remote terminal access, TCP/UDP
+// port-forwarding and file upload/download to connected devices.
 package deviceconnect
 
 import (
@@ -18,6 +22,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -32,7 +37,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/mendersoftware/go-lib-micro/ws"
-	"github.com/pkg/errors"
 	"github.com/vmihailenco/msgpack"
 
 	"github.com/mendersoftware/mender-cli/client"
@@ -58,6 +62,8 @@ const (
 	fileUploadURL = "/api/management/v1/deviceconnect/"
 )
 
+// Client talks to the Mender deviceconnect API over both HTTP and a websocket
+// connection, used for remote terminal, port-forwarding and file transfer.
 type Client struct {
 	url        string
 	skipVerify bool
@@ -68,18 +74,21 @@ type Client struct {
 	client     *http.Client
 }
 
+// NewClient returns a deviceconnect API client for the given server URL using
+// the provided JWT token. When skipVerify is true, TLS certificate
+// verification is disabled.
 func NewClient(url string, token string, skipVerify bool) *Client {
 	return &Client{
 		url:        url,
 		token:      token,
 		skipVerify: skipVerify,
-		client:     client.NewHttpClient(skipVerify),
+		client:     client.NewHTTPClient(skipVerify),
 		readMutex:  &sync.Mutex{},
 		writeMutex: &sync.Mutex{},
 	}
 }
 
-// Connect to the websocket
+// Connect opens a websocket connection to the given device.
 func (c *Client) Connect(deviceID string, token string) error {
 	fmt.Fprintf(os.Stderr, "Connecting to the device %s...\n", deviceID)
 	u, err := url.Parse(
@@ -94,24 +103,26 @@ func (c *Client) Connect(deviceID string, token string) error {
 		),
 	)
 	if err != nil {
-		return errors.Wrap(err, "Unable to parse the server URL")
+		return fmt.Errorf("unable to parse the server URL: %w", err)
 	}
 	u.Scheme = strings.Replace(u.Scheme, httpProtocol, wsProtocol, 1)
 
 	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+string(token))
-	websocket.DefaultDialer.TLSClientConfig = &tls.Config{
-		InsecureSkipVerify: c.skipVerify,
+	headers.Set("Authorization", "Bearer "+token)
+	dialer := websocket.Dialer{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: c.skipVerify,
+		},
 	}
-	conn, rsp, err := websocket.DefaultDialer.Dial(u.String(), headers)
+	conn, rsp, err := dialer.Dial(u.String(), headers)
 	if err != nil {
-		return errors.Wrap(err, "Unable to connect to the device")
+		return fmt.Errorf("unable to connect to the device: %w", err)
 	}
 	defer rsp.Body.Close()
 
 	err = conn.SetReadDeadline(time.Now().Add(pongWait))
 	if err != nil {
-		return errors.Wrap(err, "Unable to set the read deadline")
+		return fmt.Errorf("unable to set the read deadline: %w", err)
 	}
 
 	c.conn = conn
@@ -195,15 +206,15 @@ func (c *Client) ReadMessage() (*ws.ProtoMsg, error) {
 func (c *Client) WriteMessage(m *ws.ProtoMsg) error {
 	data, err := msgpack.Marshal(m)
 	if err != nil {
-		return errors.Wrap(err, "Unable to marshal the message from the websocket")
+		return fmt.Errorf("unable to marshal the message from the websocket: %w", err)
 	}
 	if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
-		return errors.Wrap(err, "Unable to set the write deadline")
+		return fmt.Errorf("unable to set the write deadline: %w", err)
 	}
 	c.writeMutex.Lock()
 	defer c.writeMutex.Unlock()
 	if err := c.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-		return errors.Wrap(err, "Unable to write the message")
+		return fmt.Errorf("unable to write the message: %w", err)
 	}
 	return nil
 }
@@ -217,7 +228,7 @@ func NewFileTransferClient(url string, token string, skipVerify bool) *Client {
 	return &Client{
 		url:    url,
 		token:  token,
-		client: client.NewHttpClient(skipVerify),
+		client: client.NewHTTPClient(skipVerify),
 	}
 }
 
@@ -290,7 +301,7 @@ func (c *Client) Upload(sourcePath string, deviceSpec *DeviceSpec) error {
 		return err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+string(c.token))
+	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	reqDump, _ := httputil.DumpRequest(req, false)
 	log.Verbf("sending request: \n%v", string(reqDump))
@@ -327,9 +338,9 @@ func (c *Client) Download(deviceSpec *DeviceSpec, sourcePath string) error {
 		nil,
 	)
 	if err != nil {
-		return nil
+		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+string(c.token))
+	req.Header.Set("Authorization", "Bearer "+c.token)
 	q := req.URL.Query()
 	q.Add("path", deviceSpec.DevicePath)
 	req.URL.RawQuery = q.Encode()
@@ -372,7 +383,7 @@ func (c *Client) downloadFile(localFileName string, resp *http.Response) error {
 	gid := resp.Header.Get("X-MEN-FILE-GID")
 	mode := resp.Header.Get("X-MEN-FILE-MODE")
 	if mode == "" {
-		return errors.New("Missing X-MEN-FILE-MODE header")
+		return errors.New("missing X-MEN-FILE-MODE header")
 	}
 	modeo, err := strconv.ParseInt(mode, 8, 32)
 	if err != nil {
@@ -381,7 +392,7 @@ func (c *Client) downloadFile(localFileName string, resp *http.Response) error {
 	_size := resp.Header.Get("X-MEN-FILE-SIZE")
 	size, err := strconv.ParseInt(_size, 10, 64)
 	if err != nil {
-		return fmt.Errorf("No proper size given for the file: %s", _size)
+		return fmt.Errorf("no proper size given for the file: %s", _size)
 	}
 	var n int64
 	file, err := os.OpenFile(localFileName, os.O_CREATE|os.O_WRONLY, os.FileMode(modeo))
@@ -392,11 +403,7 @@ func (c *Client) downloadFile(localFileName string, resp *http.Response) error {
 	defer file.Close()
 
 	if resp.Header.Get("Content-Type") != "application/octet-stream" {
-		return fmt.Errorf("Unexpected Content-Type header: %s", resp.Header.Get("Content-Type"))
-	}
-	if err != nil {
-		log.Err("downloadFile: Failed to parse the Content-Type header")
-		return err
+		return fmt.Errorf("unexpected Content-Type header: %s", resp.Header.Get("Content-Type"))
 	}
 	n, err = io.Copy(file, resp.Body)
 	log.Verbf("wrote: %d\n", n)
@@ -405,7 +412,7 @@ func (c *Client) downloadFile(localFileName string, resp *http.Response) error {
 	}
 	if n != size {
 		return errors.New(
-			"The downloaded file does not match the expected length in 'X-MEN-FILE-SIZE'",
+			"downloaded file does not match the expected length in 'X-MEN-FILE-SIZE'",
 		)
 	}
 	// Set the proper permissions and {G,U}ID's if present

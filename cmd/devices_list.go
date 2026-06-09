@@ -17,7 +17,6 @@ import (
 	"errors"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/mendersoftware/mender-cli/client/devices"
 )
@@ -25,6 +24,15 @@ import (
 var devicesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Get a list of devices from the Mender server.",
+	Long: "Get a list of devices from the Mender server's device authentication " +
+		"service.\n\n" +
+		"Results are paginated: use --page and --per-page to navigate. (This " +
+		"differs from 'inventory devices list', which transparently returns all " +
+		"matching devices.)",
+	Example: `  mender-cli devices list
+  mender-cli devices list --detail 3
+  mender-cli devices list --page 2 --per-page 50
+  mender-cli devices list --raw`,
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewDevicesListCmd(c, args)
 		CheckErr(err)
@@ -32,16 +40,10 @@ var devicesListCmd = &cobra.Command{
 	},
 }
 
-const (
-	argRawMode = "raw"
-	argPerPage = "per-page"
-	argPage    = "page"
-)
-
 func init() {
 	devicesListCmd.Flags().IntP(argDetailLevel, "d", 0, "devices list detail level [0..3]")
-	devicesListCmd.Flags().IntP(argPerPage, "N", 20, "Number of results to display")
-	devicesListCmd.Flags().IntP(argPage, "P", 1, "Page number to return")
+	devicesListCmd.Flags().IntP(argPerPage, "N", 20, "number of results to display")
+	devicesListCmd.Flags().IntP(argPage, "P", 1, "page number to return")
 	devicesListCmd.Flags().BoolP(
 		argRawMode,
 		"r",
@@ -49,6 +51,7 @@ func init() {
 		"devices list raw mode (json from mender server)")
 }
 
+// DevicesListCmd implements `mender-cli devices list`.
 type DevicesListCmd struct {
 	server        string
 	skipVerify    bool
@@ -58,18 +61,14 @@ type DevicesListCmd struct {
 	page, perPage int
 }
 
+// NewDevicesListCmd validates flags and returns a new DevicesListCmd.
 func NewDevicesListCmd(cmd *cobra.Command, args []string) (*DevicesListCmd, error) {
-	server := viper.GetString(argRootServer)
-	if server == "" {
-		return nil, errors.New("No server")
-	}
-
-	flags := cmd.Flags()
-
-	skipVerify, err := flags.GetBool(argRootSkipVerify)
+	server, skipVerify, err := resolveServerConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
+
+	flags := cmd.Flags()
 
 	detailLevel, err := flags.GetInt(argDetailLevel)
 	if err != nil {

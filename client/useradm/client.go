@@ -11,18 +11,20 @@
 //	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //	See the License for the specific language governing permissions and
 //	limitations under the License.
+
+// Package useradm provides a client for the Mender user administration API,
+// used to authenticate (log in) and verify a JWT token.
 package useradm
 
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"time"
-
-	"github.com/pkg/errors"
 
 	"github.com/mendersoftware/mender-cli/client"
 	"github.com/mendersoftware/mender-cli/log"
@@ -34,28 +36,37 @@ const (
 	timeout  = 10 * time.Second
 )
 
+// Client talks to the Mender user administration API.
 type Client struct {
 	url      string
 	loginUrl string
 	client   *http.Client
 }
 
+// NewClient returns a user administration API client for the given server URL.
+// When skipVerify is true, TLS certificate verification is disabled.
 func NewClient(url string, skipVerify bool) *Client {
 	return &Client{
 		url:      url,
 		loginUrl: client.JoinURL(url, loginUrl),
-		client:   client.NewHttpClient(skipVerify),
+		client:   client.NewHTTPClient(skipVerify),
 	}
 }
 
+// Login authenticates against the Mender server with the given username and
+// password and returns the raw JWT token bytes on success. A non-empty token
+// is sent as a two-factor authentication (2FA) code.
 func (c *Client) Login(user, pass string, token string) ([]byte, error) {
 	var reader *bytes.Reader
 	var req *http.Request
 	var err error
 
 	if len(token) > 1 {
-		tokenJson := "{\"token2fa\":\"" + token + "\"}"
-		reader = bytes.NewReader([]byte(tokenJson))
+		tokenJSON, marshalErr := json.Marshal(map[string]string{"token2fa": token})
+		if marshalErr != nil {
+			return nil, fmt.Errorf("failed to encode 2FA token: %w", marshalErr)
+		}
+		reader = bytes.NewReader(tokenJSON)
 		req, err = http.NewRequest(http.MethodPost, c.loginUrl, reader)
 	} else {
 		req, err = http.NewRequest(http.MethodPost, c.loginUrl, nil)
@@ -75,7 +86,7 @@ func (c *Client) Login(user, pass string, token string) ([]byte, error) {
 
 	rsp, err := c.client.Do(req.WithContext(ctx))
 	if err != nil {
-		return nil, errors.Wrap(err, "POST /auth/login request failed")
+		return nil, fmt.Errorf("POST /auth/login request failed: %w", err)
 	}
 	defer rsp.Body.Close()
 
@@ -84,11 +95,11 @@ func (c *Client) Login(user, pass string, token string) ([]byte, error) {
 
 	body, err := io.ReadAll(rsp.Body)
 	if err != nil {
-		return nil, errors.Wrap(err, "can't read request body")
+		return nil, fmt.Errorf("can't read request body: %w", err)
 	}
 
 	if rsp.StatusCode != http.StatusOK {
-		return nil, errors.New(fmt.Sprintf("login failed with status %d", rsp.StatusCode))
+		return nil, fmt.Errorf("login failed with status %d", rsp.StatusCode)
 	}
 
 	return body, nil
@@ -110,7 +121,7 @@ func (e *VerifyError) Error() string {
 func (c *Client) Verify(token string) error {
 	req, err := http.NewRequest(http.MethodGet, client.JoinURL(c.url, meUrl), nil)
 	if err != nil {
-		return errors.Wrap(err, "failed to create verify request")
+		return fmt.Errorf("failed to create verify request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
@@ -122,7 +133,7 @@ func (c *Client) Verify(token string) error {
 
 	rsp, err := c.client.Do(req.WithContext(ctx))
 	if err != nil {
-		return errors.Wrap(err, "GET /useradm/users/me request failed")
+		return fmt.Errorf("GET /useradm/users/me request failed: %w", err)
 	}
 	defer rsp.Body.Close()
 

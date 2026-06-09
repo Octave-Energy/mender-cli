@@ -85,6 +85,9 @@ var tokenShowCmd = &cobra.Command{
 		"intentionally omitted. Use --json to emit the decoded header and " +
 		"payload as JSON. Use --raw to print the token verbatim (useful for " +
 		"piping to clipboard tools or Authorization headers).",
+	Example: `  mender-cli token show
+  mender-cli token show --json
+  mender-cli token show --raw`,
 	Run: func(c *cobra.Command, args []string) {
 		raw, err := c.Flags().GetBool(argTokenShowRaw)
 		CheckErr(err)

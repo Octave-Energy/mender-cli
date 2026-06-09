@@ -24,7 +24,6 @@ import (
 
 	"github.com/howeyc/gopass"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/mendersoftware/mender-cli/client/useradm"
 	"github.com/mendersoftware/mender-cli/log"
@@ -38,6 +37,8 @@ var tokenSetCmd = &cobra.Command{
 		"masked interactive prompt otherwise. After saving, the token is " +
 		"validated against the configured server; a failed validation only " +
 		"produces a warning — the token is always saved.",
+	Example: `  mender-cli token set
+  echo "$MY_PAT" | mender-cli token set`,
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewSetTokenCmd(c, args)
 		CheckErr(err)
@@ -58,13 +59,9 @@ type SetTokenCmd struct {
 	verifier func(server string, skipVerify bool, token string) error
 }
 
+// NewSetTokenCmd validates flags and returns a new SetTokenCmd.
 func NewSetTokenCmd(cmd *cobra.Command, _ []string) (*SetTokenCmd, error) {
-	server := viper.GetString(argRootServer)
-	if server == "" {
-		return nil, errors.New("no server configured")
-	}
-
-	skipVerify, err := cmd.Flags().GetBool(argRootSkipVerify)
+	server, skipVerify, err := resolveServerConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
