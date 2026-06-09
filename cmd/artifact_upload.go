@@ -14,10 +14,9 @@
 package cmd
 
 import (
-	"github.com/pkg/errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/mendersoftware/mender-cli/client/deployments"
 	"github.com/mendersoftware/mender-cli/log"
@@ -32,6 +31,8 @@ var artifactUploadCmd = &cobra.Command{
 	Use:   "upload [flags] ARTIFACT",
 	Short: "Upload mender artifact to the Mender server.",
 	Args:  cobra.ExactArgs(1),
+	Example: `  mender-cli artifacts upload ./release-1.mender
+  mender-cli artifacts upload --description "release 1" ./release-1.mender`,
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewArtifactUploadCmd(c, args)
 		CheckErr(err)
@@ -45,6 +46,7 @@ func init() {
 	artifactUploadCmd.Flags().BoolP(argDirect, "", false, "upload directly to storage")
 }
 
+// ArtifactUploadCmd implements `mender-cli artifacts upload`.
 type ArtifactUploadCmd struct {
 	server          string
 	skipVerify      bool
@@ -55,13 +57,9 @@ type ArtifactUploadCmd struct {
 	direct          bool
 }
 
+// NewArtifactUploadCmd validates flags/args and returns a new ArtifactUploadCmd.
 func NewArtifactUploadCmd(cmd *cobra.Command, args []string) (*ArtifactUploadCmd, error) {
-	server := viper.GetString(argRootServer)
-	if server == "" {
-		return nil, errors.New("No server")
-	}
-
-	skipVerify, err := cmd.Flags().GetBool(argRootSkipVerify)
+	server, skipVerify, err := resolveServerConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +101,7 @@ func (c *ArtifactUploadCmd) Run() error {
 		log.Infof("getting direct link.\n")
 		link, err := client.DirectDownloadLink(c.token)
 		if err != nil {
-			return errors.Wrap(err, "failed to get the direct pre-signed URL")
+			return fmt.Errorf("failed to get the direct pre-signed URL: %w", err)
 		}
 
 		log.Infof("uploading the artifact.\n")
@@ -116,7 +114,7 @@ func (c *ArtifactUploadCmd) Run() error {
 			c.withoutProgress,
 		)
 		if err != nil {
-			return errors.Wrap(err, "failed to upload the artifact")
+			return fmt.Errorf("failed to upload the artifact: %w", err)
 		}
 	} else {
 		err := client.UploadArtifact(c.description, c.artifactPath, c.token, c.withoutProgress)

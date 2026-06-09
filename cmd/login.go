@@ -17,11 +17,9 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/howeyc/gopass"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
@@ -38,6 +36,9 @@ const (
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Log in to the Mender server (required before other operations).",
+	Example: `  mender-cli --server https://hosted.mender.io login --username me@example.com
+  mender-cli login --username me@example.com --password secret
+  mender-cli login --username me@example.com --2fa-code 123456`,
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewLoginCmd(c, args)
 		CheckErr(err)
@@ -54,6 +55,7 @@ func init() {
 	_ = viper.BindPFlag(argLoginPassword, loginCmd.Flags().Lookup(argLoginPassword))
 }
 
+// LoginCmd implements `mender-cli login`.
 type LoginCmd struct {
 	server     string
 	skipVerify bool
@@ -63,13 +65,9 @@ type LoginCmd struct {
 	tokenPath  string
 }
 
+// NewLoginCmd validates flags and returns a new LoginCmd.
 func NewLoginCmd(cmd *cobra.Command, args []string) (*LoginCmd, error) {
-	server := viper.GetString(argRootServer)
-	if server == "" {
-		return nil, errors.New("No server, this should not happen")
-	}
-
-	skipVerify, err := cmd.Flags().GetBool(argRootSkipVerify)
+	server, skipVerify, err := resolveServerConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -158,18 +156,8 @@ func (c *LoginCmd) maybeGetPassword() error {
 }
 
 func (c *LoginCmd) saveToken(t []byte) error {
-	dir := filepath.Dir(c.tokenPath)
-	log.Verbf("creating directory: %v\n", dir)
-
-	err := os.MkdirAll(dir, os.ModeDir|0700)
-	if err != nil {
-		return errors.Wrapf(err, "failed to create directory %s", dir)
-
-	}
-
-	err = os.WriteFile(c.tokenPath, t, 0600)
-	if err != nil {
-		return errors.Wrapf(err, "failed to create file %s", c.tokenPath)
+	if err := writeAuthToken(c.tokenPath, t); err != nil {
+		return err
 	}
 
 	log.Verb("saved token to: " + c.tokenPath)

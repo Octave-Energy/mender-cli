@@ -11,12 +11,16 @@
 //	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //	See the License for the specific language governing permissions and
 //	limitations under the License.
+
+// Package deployments provides a client for the Mender deployments API, used to
+// upload, download, list and delete Mender artifacts.
 package deployments
 
 import (
 	"archive/tar"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -29,7 +33,6 @@ import (
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
-	"github.com/pkg/errors"
 
 	"github.com/mendersoftware/mender-artifact/areader"
 
@@ -61,7 +64,7 @@ type artifactData struct {
 			Size     int       `json:"size"`
 			Date     time.Time `json:"date"`
 		} `json:"files"`
-		MetaData []interface{} `json:"meta_data"`
+		MetaData []any `json:"meta_data"`
 	} `json:"updates"`
 	ArtifactProvides struct {
 		ArtifactName string `json:"artifact_name"`
@@ -83,6 +86,7 @@ const (
 	artifactDownloadURL = "/api/management/v1/deployments/artifacts/:id/download"
 )
 
+// Client talks to the Mender deployments API for artifact management.
 type Client struct {
 	url                 string
 	artifactUploadURL   string
@@ -105,6 +109,8 @@ type UploadLink struct {
 	Link
 }
 
+// NewClient returns a deployments API client for the given server URL. When
+// skipVerify is true, TLS certificate verification is disabled.
 func NewClient(url string, skipVerify bool) *Client {
 	return &Client{
 		url:                 url,
@@ -114,7 +120,7 @@ func NewClient(url string, skipVerify bool) *Client {
 		artifactsListURL:    client.JoinURL(url, artifactsListURL),
 		artifactDeleteURL:   client.JoinURL(url, artifactsDeleteURL),
 		directUploadURL:     client.JoinURL(url, directUploadURL),
-		client:              client.NewHttpClient(skipVerify),
+		client:              client.NewHTTPClient(skipVerify),
 	}
 }
 
@@ -136,7 +142,7 @@ func (c *Client) DirectDownloadLink(token string) (*UploadLink, error) {
 
 func (c *Client) ListArtifacts(token string, detailLevel, perPage, page int, raw bool) error {
 	if detailLevel > 3 || detailLevel < 0 {
-		return fmt.Errorf("FAILURE: invalid artifact detail")
+		return fmt.Errorf("invalid artifact detail")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, c.artifactsListURL, nil)
@@ -161,7 +167,7 @@ func (c *Client) ListArtifacts(token string, detailLevel, perPage, page int, raw
 		return err
 	}
 	defer rsp.Body.Close()
-	if rsp.StatusCode != 200 {
+	if rsp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s request failed with status %d",
 			req.URL.RequestURI(), rsp.StatusCode)
 	}
@@ -227,12 +233,12 @@ func listArtifact(a artifactData, detailLevel int) {
 	fmt.Println("--------------------------------------------------------------------------------")
 }
 
-// Type info structure
+// ArtifactUpdateTypeInfo describes the update type of an artifact payload.
 type ArtifactUpdateTypeInfo struct {
 	Type *string `json:"type" valid:"required"`
 }
 
-// Update file structure
+// UpdateFile describes a single file contained in an artifact update.
 type UpdateFile struct {
 	// Image name
 	Name string `json:"name" valid:"required"`
@@ -247,11 +253,11 @@ type UpdateFile struct {
 	Date *time.Time `json:"date" valid:"optional"`
 }
 
-// Update structure
+// Update describes a single update (payload) within an artifact.
 type Update struct {
 	TypeInfo ArtifactUpdateTypeInfo `json:"type_info" valid:"required"`
 	Files    []UpdateFile           `json:"files"`
-	MetaData interface{}            `json:"meta_data,omitempty" valid:"optional"`
+	MetaData any                    `json:"meta_data,omitempty" valid:"optional"`
 }
 
 type DirectUploadMetadata struct {
@@ -312,13 +318,13 @@ func (c *Client) DirectUpload(
 
 	artifact, err := os.Open(artifactPath)
 	if err != nil {
-		return errors.Wrap(err, "Cannot read artifact file")
+		return fmt.Errorf("cannot read artifact file: %w", err)
 	}
 	defer artifact.Close()
 
 	artifactStats, err := artifact.Stat()
 	if err != nil {
-		return errors.Wrap(err, "Cannot read artifact file stats")
+		return fmt.Errorf("cannot read artifact file stats: %w", err)
 	}
 	if err = checkArtifactFormat(artifact); err != nil {
 		return err
@@ -335,7 +341,7 @@ func (c *Client) DirectUpload(
 		req, err = http.NewRequest(http.MethodPut, url, artifact)
 	}
 	if err != nil {
-		return errors.Wrap(err, "Cannot create request")
+		return fmt.Errorf("cannot create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/vnd.mender-artifact")
 	req.ContentLength = artifactStats.Size()
@@ -348,7 +354,7 @@ func (c *Client) DirectUpload(
 	}
 	rsp, err := c.client.Do(req)
 	if err != nil {
-		return errors.Wrap(err, "POST /artifacts request failed")
+		return fmt.Errorf("POST /artifacts request failed: %w", err)
 	}
 	defer rsp.Body.Close()
 
@@ -356,9 +362,7 @@ func (c *Client) DirectUpload(
 	log.Verbf("response: \n%v\n", string(rspDump))
 
 	if rsp.StatusCode >= httpErrorBoundary {
-		return errors.New(
-			fmt.Sprintf("artifact upload to '%s' failed with status %d", req.Host, rsp.StatusCode),
-		)
+		return fmt.Errorf("artifact upload to '%s' failed with status %d", req.Host, rsp.StatusCode)
 	} else {
 		body := readArtifactMetadata(artifactPath, artifactStats.Size())
 		_, err := client.DoPostRequest(
@@ -371,7 +375,7 @@ func (c *Client) DirectUpload(
 			body,
 		)
 		if err != nil {
-			return errors.Wrap(err, "failed to notify on complete upload")
+			return fmt.Errorf("failed to notify on complete upload: %w", err)
 		}
 	}
 
@@ -386,12 +390,12 @@ func (c *Client) UploadArtifact(
 
 	artifact, err := os.Open(artifactPath)
 	if err != nil {
-		return errors.Wrap(err, "Cannot read artifact file")
+		return fmt.Errorf("cannot read artifact file: %w", err)
 	}
 
 	artifactStats, err := artifact.Stat()
 	if err != nil {
-		return errors.Wrap(err, "Cannot read artifact file stats")
+		return fmt.Errorf("cannot read artifact file stats: %w", err)
 	}
 
 	if err = checkArtifactFormat(artifact); err != nil {
@@ -405,10 +409,10 @@ func (c *Client) UploadArtifact(
 
 	req, err := http.NewRequest(http.MethodPost, c.artifactUploadURL, pR)
 	if err != nil {
-		return errors.Wrap(err, "Cannot create request")
+		return fmt.Errorf("cannot create request: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+string(token))
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	reqDump, _ := httputil.DumpRequest(req, false)
 	log.Verbf("sending request: \n%v", string(reqDump))
@@ -448,7 +452,7 @@ func (c *Client) UploadArtifact(
 
 	rsp, err := c.client.Do(req)
 	if err != nil {
-		return errors.Wrap(err, "POST /artifacts request failed")
+		return fmt.Errorf("POST /artifacts request failed: %w", err)
 	}
 	defer rsp.Body.Close()
 	pR.Close()
@@ -457,16 +461,15 @@ func (c *Client) UploadArtifact(
 	log.Verbf("response: \n%v\n", string(rspDump))
 
 	if rsp.StatusCode != http.StatusCreated {
-		if rsp.StatusCode == http.StatusUnauthorized {
+		switch rsp.StatusCode {
+		case http.StatusUnauthorized:
 			log.Verbf("artifact upload to '%s' failed with status %d", req.Host, rsp.StatusCode)
-			return errors.New("Unauthorized. Please Login first")
-		} else if rsp.StatusCode == http.StatusConflict {
+			return errors.New("unauthorized, please login first")
+		case http.StatusConflict:
 			log.Verbf("artifact upload to '%s' failed with status %d", req.Host, rsp.StatusCode)
-			return errors.New("Artifact with same name or depends exists already")
+			return errors.New("artifact with same name or depends exists already")
 		}
-		return errors.New(
-			fmt.Sprintf("artifact upload to '%s' failed with status %d", req.Host, rsp.StatusCode),
-		)
+		return fmt.Errorf("artifact upload to '%s' failed with status %d", req.Host, rsp.StatusCode)
 	}
 
 	return nil
@@ -478,16 +481,16 @@ func (c *Client) DeleteArtifact(
 
 	req, err := http.NewRequest(http.MethodDelete, c.artifactDeleteURL+"/"+artifactID, nil)
 	if err != nil {
-		return errors.Wrap(err, "Cannot create request")
+		return fmt.Errorf("cannot create request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+string(token))
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	reqDump, _ := httputil.DumpRequest(req, false)
 	log.Verbf("sending request: \n%v", string(reqDump))
 
 	rsp, err := c.client.Do(req)
 	if err != nil {
-		return errors.Wrap(err, "DELETE /artifacts request failed")
+		return fmt.Errorf("DELETE /artifacts request failed: %w", err)
 	}
 	defer rsp.Body.Close()
 
@@ -497,15 +500,13 @@ func (c *Client) DeleteArtifact(
 	if rsp.StatusCode != http.StatusNoContent {
 		body, err := io.ReadAll(rsp.Body)
 		if err != nil {
-			return errors.Wrap(err, "can't read request body")
+			return fmt.Errorf("can't read request body: %w", err)
 		}
 		if rsp.StatusCode == http.StatusUnauthorized {
 			log.Verbf("artifact delete failed with status %d, reason: %s", rsp.StatusCode, body)
-			return errors.New("Unauthorized. Please Login first")
+			return errors.New("unauthorized, please login first")
 		}
-		return errors.New(
-			fmt.Sprintf("artifact upload failed with status %d, reason: %s", rsp.StatusCode, body),
-		)
+		return fmt.Errorf("artifact upload failed with status %d, reason: %s", rsp.StatusCode, body)
 	}
 
 	return nil
@@ -517,11 +518,11 @@ func (c *Client) DownloadArtifact(
 
 	link, err := c.getLink(artifactID, token)
 	if err != nil {
-		return errors.Wrap(err, "Cannot get artifact link")
+		return fmt.Errorf("cannot get artifact link: %w", err)
 	}
 	artifact, err := c.getArtifact(artifactID, token)
 	if err != nil {
-		return errors.Wrap(err, "Cannot get artifact details")
+		return fmt.Errorf("cannot get artifact details: %w", err)
 	}
 	log.Verbf("link: \n%v\n", link.Uri)
 	log.Verbf("artifact: \n%v\n", artifact.Size)
@@ -533,14 +534,14 @@ func (c *Client) DownloadArtifact(
 
 	req, err := http.NewRequest(http.MethodGet, link.Uri, nil)
 	if err != nil {
-		return errors.Wrap(err, "Cannot create request")
+		return fmt.Errorf("cannot create request: %w", err)
 	}
 
 	reqDump, _ := httputil.DumpRequest(req, false)
 	log.Verbf("sending request: \n%v", string(reqDump))
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return errors.Wrap(err, "GET /artifacts request failed")
+		return fmt.Errorf("GET /artifacts request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -548,17 +549,17 @@ func (c *Client) DownloadArtifact(
 	case http.StatusOK:
 		return c.downloadFile(artifact.Size, sourcePath, resp, noProgress)
 	case http.StatusBadRequest:
-		return errors.New("Bad request\n")
+		return errors.New("bad request")
 	case http.StatusForbidden:
-		return errors.New("Forbidden")
+		return errors.New("forbidden")
 	case http.StatusNotFound:
-		return errors.New("File not found on the device\n")
+		return errors.New("file not found on the device")
 	case http.StatusConflict:
-		return errors.New("The device is not connected\n")
+		return errors.New("the device is not connected")
 	case http.StatusInternalServerError:
-		return errors.New("Internal server error\n")
+		return errors.New("internal server error")
 	default:
-		return errors.New("Error: Received unexpected response code: " +
+		return errors.New("received unexpected response code: " +
 			strconv.Itoa(resp.StatusCode))
 	}
 }
@@ -579,16 +580,16 @@ func (c *Client) getArtifact(
 	req, err := http.NewRequest(http.MethodGet,
 		strings.ReplaceAll(c.artifactURL, ":id", artifactID), nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "Cannot create request")
+		return nil, fmt.Errorf("cannot create request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+string(token))
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	reqDump, _ := httputil.DumpRequest(req, false)
 	log.Verbf("sending request: \n%v", string(reqDump))
 
 	rsp, err := c.client.Do(req)
 	if err != nil {
-		return nil, errors.Wrap(err, "GET /artifacts request failed")
+		return nil, fmt.Errorf("GET /artifacts request failed: %w", err)
 	}
 	defer rsp.Body.Close()
 
@@ -597,13 +598,13 @@ func (c *Client) getArtifact(
 
 	body, err := io.ReadAll(rsp.Body)
 	if err != nil {
-		return nil, errors.Wrap(err, "GET /artifacts request failed")
+		return nil, fmt.Errorf("GET /artifacts request failed: %w", err)
 	}
 
 	var artifact Artifact
 	err = json.Unmarshal(body, &artifact)
 	if err != nil {
-		return nil, errors.Wrap(err, "GET /artifacts request failed")
+		return nil, fmt.Errorf("GET /artifacts request failed: %w", err)
 	}
 
 	return &artifact, nil
@@ -615,16 +616,16 @@ func (c *Client) getLink(
 	req, err := http.NewRequest(http.MethodGet,
 		strings.ReplaceAll(c.artifactDownloadURL, ":id", artifactID), nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "Cannot create request")
+		return nil, fmt.Errorf("cannot create request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+string(token))
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	reqDump, _ := httputil.DumpRequest(req, false)
 	log.Verbf("sending request: \n%v", string(reqDump))
 
 	rsp, err := c.client.Do(req)
 	if err != nil {
-		return nil, errors.Wrap(err, "GET /artifacts request failed")
+		return nil, fmt.Errorf("GET /artifacts request failed: %w", err)
 	}
 	defer rsp.Body.Close()
 
@@ -633,13 +634,13 @@ func (c *Client) getLink(
 
 	body, err := io.ReadAll(rsp.Body)
 	if err != nil {
-		return nil, errors.Wrap(err, "GET /artifacts request failed")
+		return nil, fmt.Errorf("GET /artifacts request failed: %w", err)
 	}
 
 	var link DownloadLink
 	err = json.Unmarshal(body, &link)
 	if err != nil {
-		return nil, errors.Wrap(err, "GET /artifacts request failed")
+		return nil, fmt.Errorf("GET /artifacts request failed: %w", err)
 	}
 
 	return &link, nil
@@ -647,34 +648,25 @@ func (c *Client) getLink(
 
 func (c *Client) downloadFile(size int64, localFileName string, resp *http.Response,
 	noProgress bool) error {
-	path := resp.Header.Get("X-MEN-FILE-PATH")
 	uid := resp.Header.Get("X-MEN-FILE-UID")
 	gid := resp.Header.Get("X-MEN-FILE-GID")
 	var n int64
 
 	file, err := os.Create(localFileName)
 	if err != nil {
-		return errors.Wrap(err, "Cannot create file")
+		return fmt.Errorf("cannot create file: %w", err)
 	}
 	defer file.Close()
-	if err != nil {
-		log.Errf("Failed to create the file %s locally\n", path)
-		return err
-	}
 
 	if resp.Header.Get("Content-Type") != "application/vnd.mender-artifact" {
-		return fmt.Errorf("Unexpected Content-Type header: %s", resp.Header.Get("Content-Type"))
-	}
-	if err != nil {
-		log.Err("downloadFile: Failed to parse the Content-Type header")
-		return err
+		return fmt.Errorf("unexpected Content-Type header: %s", resp.Header.Get("Content-Type"))
 	}
 	i, _ := strconv.Atoi(resp.Header.Get("Content-Length"))
 	sourceSize := int64(i)
 	source := resp.Body
 
 	if !noProgress {
-		var bar *pb.ProgressBar = pb.New64(sourceSize).
+		bar := pb.New64(sourceSize).
 			Set(pb.Bytes, true).
 			SetRefreshRate(time.Millisecond * 100)
 		bar.Start()
@@ -690,7 +682,7 @@ func (c *Client) downloadFile(size int64, localFileName string, resp *http.Respo
 	}
 	if n != size {
 		return errors.New(
-			"The downloaded file does not match the expected length in 'X-MEN-FILE-SIZE'",
+			"downloaded file does not match the expected length in 'X-MEN-FILE-SIZE'",
 		)
 	}
 	// Set the proper permissions and {G,U}ID's if present
@@ -714,16 +706,16 @@ func checkArtifactFormat(artifact *os.File) error {
 	tr := tar.NewReader(artifact)
 	versionH, err := tr.Next()
 	if err != nil {
-		return errors.Wrap(err, "error parsing artifact")
+		return fmt.Errorf("error parsing artifact: %w", err)
 	} else if versionH.Name != "version" {
-		return errors.New("Invalid artifact format")
+		return errors.New("invalid artifact format")
 	}
 	v := struct {
 		Format string `json:"format"`
 	}{}
 	err = json.NewDecoder(tr).Decode(&v)
 	if err != nil || v.Format != "mender" {
-		return errors.New("Invalid artifact format")
+		return errors.New("invalid artifact format")
 	}
 	_, err = artifact.Seek(0, io.SeekStart)
 	if err != nil || v.Format != "mender" {

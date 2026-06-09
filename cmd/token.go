@@ -1,4 +1,4 @@
-// Copyright 2023 Northern.tech AS
+// Copyright 2026 Northern.tech AS
 //
 //	Licensed under the Apache License, Version 2.0 (the "License");
 //	you may not use this file except in compliance with the License.
@@ -13,19 +13,19 @@
 //	limitations under the License.
 package cmd
 
-import (
-	"github.com/spf13/cobra"
-)
+import "github.com/spf13/cobra"
 
-var artifactsCmd = &cobra.Command{
-	Use:       "artifacts",
-	Short:     "Operations on mender artifacts.",
-	ValidArgs: []string{"upload", "list", "delete", "download"},
+// tokenCmd is the parent for token-management subcommands.
+var tokenCmd = &cobra.Command{
+	Use:   "token",
+	Short: "Manage the locally stored authentication token.",
+	Long: "Manage the locally stored authentication token (e.g. a Personal " +
+		"Access Token) without needing to know the on-disk storage location.",
 }
 
 func init() {
-	artifactsCmd.AddCommand(artifactUploadCmd)
-	artifactsCmd.AddCommand(artifactsListCmd)
-	artifactsCmd.AddCommand(artifactDeleteCmd)
-	artifactsCmd.AddCommand(artifactDownloadCmd)
+	tokenCmd.AddCommand(tokenSetCmd)
+	tokenCmd.AddCommand(tokenShowCmd)
+	tokenCmd.AddCommand(tokenPathCmd)
+	tokenCmd.AddCommand(tokenClearCmd)
 }

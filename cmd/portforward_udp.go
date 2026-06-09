@@ -25,7 +25,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mendersoftware/go-lib-micro/ws"
-	"github.com/mendersoftware/go-lib-micro/ws/portforward"
 	wspf "github.com/mendersoftware/go-lib-micro/ws/portforward"
 	"github.com/vmihailenco/msgpack"
 )
@@ -86,7 +85,7 @@ func (p *UDPPortForwarder) Run(
 	recvChan := make(chan *ws.ProtoMsg, portForwardUDPChannelSize)
 	recvChans[connectionID] = recvChan
 
-	protocol := portforward.PortForwardProtocol(wspf.PortForwardProtocolUDP)
+	protocol := wspf.PortForwardProtocol(wspf.PortForwardProtocolUDP)
 	portforwardNew := &wspf.PortForwardNew{
 		Protocol:   &protocol,
 		RemoteHost: &p.remoteHost,
@@ -95,14 +94,14 @@ func (p *UDPPortForwarder) Run(
 	body, err := msgpack.Marshal(portforwardNew)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err.Error())
-		panic(err)
+		return
 	}
 	m := &ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:     p.proto,
 			MsgType:   wspf.MessageTypePortForwardNew,
 			SessionID: sessionID,
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				wspf.PropertyConnectionID: connectionID,
 			},
 		},
@@ -118,7 +117,7 @@ func (p *UDPPortForwarder) Run(
 					Proto:     p.proto,
 					MsgType:   wspf.MessageTypePortForwardStop,
 					SessionID: sessionID,
-					Properties: map[string]interface{}{
+					Properties: map[string]any{
 						wspf.PropertyConnectionID: connectionID,
 					},
 				},
@@ -154,7 +153,7 @@ func (p *UDPPortForwarder) Run(
 								Proto:     p.proto,
 								MsgType:   wspf.MessageTypePortForwardAck,
 								SessionID: sessionID,
-								Properties: map[string]interface{}{
+								Properties: map[string]any{
 									wspf.PropertyConnectionID: connectionID,
 								},
 							},
@@ -193,7 +192,7 @@ func (p *UDPPortForwarder) Run(
 					Proto:     p.proto,
 					MsgType:   wspf.MessageTypePortForward,
 					SessionID: sessionID,
-					Properties: map[string]interface{}{
+					Properties: map[string]any{
 						wspf.PropertyConnectionID: connectionID,
 					},
 				},

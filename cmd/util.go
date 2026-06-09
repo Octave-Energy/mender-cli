@@ -14,6 +14,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -21,15 +22,34 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"github.com/mendersoftware/mender-cli/log"
 )
 
+// CheckErr writes a "FAILURE: <error>" message to standard error and exits the
+// process with status 1 when e is non-nil. It is a no-op for a nil error.
 func CheckErr(e error) {
 	if e != nil {
 		fmt.Fprintf(os.Stderr, "FAILURE: %s\n", e.Error())
 		os.Exit(1)
 	}
+}
+
+// resolveServerConfig reads the shared --server and --skip-verify settings from
+// the root flags. It returns an error if no server has been configured. It is
+// the common preamble for the command constructors.
+func resolveServerConfig(cmd *cobra.Command) (server string, skipVerify bool, err error) {
+	server = viper.GetString(argRootServer)
+	if server == "" {
+		return "", false, errors.New("no server configured")
+	}
+	skipVerify, err = cmd.Flags().GetBool(argRootSkipVerify)
+	if err != nil {
+		return "", false, err
+	}
+	return server, skipVerify, nil
 }
 
 func migrateAuthToken(oldtoken string, token string) {
@@ -63,7 +83,7 @@ func getDefaultAuthTokenPath() (string, error) {
 	} else if user, err := user.Current(); err == nil {
 		userhomedir = user.HomeDir
 	} else {
-		return "", errors.New("Not able to determine users cache dir")
+		return "", errors.New("not able to determine users cache dir")
 	}
 
 	if cachehomeenv := os.Getenv("XDG_CACHE_HOME"); cachehomeenv != "" {
@@ -78,6 +98,20 @@ func getDefaultAuthTokenPath() (string, error) {
 	migrateAuthToken(oldtoken, token)
 
 	return token, nil
+}
+
+// writeAuthToken persists the given token bytes to path with 0600 permissions,
+// creating any missing parent directories with 0700.
+func writeAuthToken(path string, token []byte) error {
+	dir := filepath.Dir(path)
+	log.Verb("creating directory: " + dir)
+	if err := os.MkdirAll(dir, os.ModeDir|0700); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", dir, err)
+	}
+	if err := os.WriteFile(path, token, 0600); err != nil {
+		return fmt.Errorf("failed to create file %s: %w", path, err)
+	}
+	return nil
 }
 
 func getAuthToken(cmd *cobra.Command) (string, error) {
@@ -108,7 +142,7 @@ func getAuthToken(cmd *cobra.Command) (string, error) {
 
 	token, err := os.ReadFile(tokenPath)
 	if err != nil {
-		return "", errors.Wrap(err, "Please Login first")
+		return "", fmt.Errorf("please login first: %w", err)
 	}
 	tokenValue = strings.TrimSpace(string(token))
 	return tokenValue, nil

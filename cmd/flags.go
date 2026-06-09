@@ -11,21 +11,19 @@
 //	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //	See the License for the specific language governing permissions and
 //	limitations under the License.
+
 package cmd
 
-import (
-	"github.com/spf13/cobra"
+// Flag names shared across multiple commands. Keeping them in one place avoids
+// drift between the commands that declare and read the same flag.
+const (
+	// argRawMode prints the raw JSON returned by the server.
+	argRawMode = "raw"
+	// argDetailLevel selects how much detail a list/get command prints [0..3].
+	argDetailLevel = "detail"
+	// argPage and argPerPage control pagination on the paginated list commands.
+	argPage    = "page"
+	argPerPage = "per-page"
+	// argWithoutProgress disables the progress bar on transfer commands.
+	argWithoutProgress = "no-progress"
 )
-
-var artifactsCmd = &cobra.Command{
-	Use:       "artifacts",
-	Short:     "Operations on mender artifacts.",
-	ValidArgs: []string{"upload", "list", "delete", "download"},
-}
-
-func init() {
-	artifactsCmd.AddCommand(artifactUploadCmd)
-	artifactsCmd.AddCommand(artifactsListCmd)
-	artifactsCmd.AddCommand(artifactDeleteCmd)
-	artifactsCmd.AddCommand(artifactDownloadCmd)
-}

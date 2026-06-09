@@ -1,0 +1,14 @@
+version: "2"
+
+run:
+  build-tags:
+    - nopkcs11
+
+linters:
+  default: standard
+  exclusions:
+    generated: lax
+    presets:
+      # Ignore unchecked errors on the common, benign defer x.Close()/Flush()
+      # and fmt.Print* style calls.
+      - std-error-handling

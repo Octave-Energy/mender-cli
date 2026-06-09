@@ -1,4 +1,4 @@
-// Copyright 2023 Northern.tech AS
+// Copyright 2026 Northern.tech AS
 //
 //	Licensed under the Apache License, Version 2.0 (the "License");
 //	you may not use this file except in compliance with the License.
@@ -14,18 +14,21 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 )
 
-var artifactsCmd = &cobra.Command{
-	Use:       "artifacts",
-	Short:     "Operations on mender artifacts.",
-	ValidArgs: []string{"upload", "list", "delete", "download"},
-}
-
-func init() {
-	artifactsCmd.AddCommand(artifactUploadCmd)
-	artifactsCmd.AddCommand(artifactsListCmd)
-	artifactsCmd.AddCommand(artifactDeleteCmd)
-	artifactsCmd.AddCommand(artifactDownloadCmd)
+var tokenPathCmd = &cobra.Command{
+	Use:   "path",
+	Short: "Print the default on-disk storage path for the authentication token.",
+	Long: "Print the absolute filesystem path where mender-cli stores the " +
+		"authentication token by default. This always reflects the default " +
+		"platform-specific location and ignores any --token override.",
+	Example: `  mender-cli token path`,
+	Run: func(c *cobra.Command, args []string) {
+		path, err := getDefaultAuthTokenPath()
+		CheckErr(err)
+		fmt.Println(path)
+	},
 }

@@ -11,6 +11,11 @@
 //	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //	See the License for the specific language governing permissions and
 //	limitations under the License.
+
+// Package cmd implements the mender-cli command tree built on top of Cobra.
+// It wires up the root command and all subcommands (login, artifacts, devices,
+// inventory, terminal, port-forward, cp and token) and translates user input
+// into calls to the client packages.
 package cmd
 
 import (
@@ -26,8 +31,6 @@ import (
 	"github.com/mendersoftware/mender-cli/log"
 )
 
-var Version string
-
 const (
 	argRootServer     = "server"
 	argRootSkipVerify = "skip-verify"
@@ -35,7 +38,6 @@ const (
 	argRootTokenValue = "token-value"
 	argRootVerbose    = "verbose"
 	argRootGenerate   = "generate-autocomplete"
-	argRootVersion    = "version"
 )
 
 func init() {
@@ -70,7 +72,10 @@ var rootCmd = &cobra.Command{
 			log.Verb("verbose output is ON")
 		}
 	},
-	ValidArgs: []string{"artifacts", "help", "login"},
+	ValidArgs: []string{
+		"artifacts", "cp", "devices", "help", "inventory", "login",
+		"port-forward", "terminal", "token", "version",
+	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -93,12 +98,6 @@ func Execute() {
 			log.Errf("Failed to generate the Zsh autocompletion scripts: %s\n", err)
 		}
 		return
-	}
-	version, err := rootCmd.Flags().GetBool(argRootVersion)
-	CheckErr(err)
-	if version {
-		fmt.Printf("mender-cli version %s\n", Version)
-		os.Exit(0)
 	}
 	CheckErr(rootCmd.Execute())
 }
@@ -129,14 +128,16 @@ func init() {
 	rootCmd.PersistentFlags().StringP(argRootToken, "", "", "JWT token file path")
 	rootCmd.PersistentFlags().StringP(argRootTokenValue, "", "", "JWT token value (API key)")
 	rootCmd.PersistentFlags().BoolP(argRootVerbose, "v", false, "print verbose output")
-	rootCmd.Flags().Bool(argRootVersion, false, "print version")
 	rootCmd.Flags().Bool(argRootGenerate, false, "generate shell completion script")
 	_ = rootCmd.Flags().MarkHidden(argRootGenerate)
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(artifactsCmd)
 	rootCmd.AddCommand(devicesCmd)
+	rootCmd.AddCommand(inventoryCmd)
 	rootCmd.AddCommand(terminalCmd)
 	rootCmd.AddCommand(portForwardCmd)
 	rootCmd.AddCommand(fileTransferCmd)
+	rootCmd.AddCommand(tokenCmd)
+	rootCmd.AddCommand(versionCmd)
 	validateConfiguration()
 }

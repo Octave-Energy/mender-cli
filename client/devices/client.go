@@ -11,6 +11,9 @@
 //	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //	See the License for the specific language governing permissions and
 //	limitations under the License.
+
+// Package devices provides a client for the Mender device authentication
+// management API, used to list devices and their authentication sets.
 package devices
 
 import (
@@ -55,6 +58,7 @@ const (
 	devicesListURL = "/api/management/v2/devauth/devices"
 )
 
+// Client talks to the Mender device authentication management API.
 type Client struct {
 	url            string
 	devicesListURL string
@@ -62,18 +66,20 @@ type Client struct {
 	output         io.Writer
 }
 
+// NewClient returns a device authentication API client for the given server
+// URL. When skipVerify is true, TLS certificate verification is disabled.
 func NewClient(url string, skipVerify bool) *Client {
 	return &Client{
 		url:            url,
 		devicesListURL: client.JoinURL(url, devicesListURL),
-		client:         client.NewHttpClient(skipVerify),
+		client:         client.NewHTTPClient(skipVerify),
 		output:         os.Stdout,
 	}
 }
 
 func (c *Client) ListDevices(token string, detailLevel, perPage, page int, raw bool) error {
 	if detailLevel > 3 || detailLevel < 0 {
-		return fmt.Errorf("FAILURE: invalid devices detail")
+		return fmt.Errorf("invalid devices detail")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, c.devicesListURL, nil)
@@ -98,7 +104,7 @@ func (c *Client) ListDevices(token string, detailLevel, perPage, page int, raw b
 		return err
 	}
 	defer rsp.Body.Close()
-	if rsp.StatusCode != 200 {
+	if rsp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s request failed with status %d",
 			req.URL.RequestURI(), rsp.StatusCode)
 	}

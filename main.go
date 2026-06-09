@@ -11,6 +11,10 @@
 //	WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //	See the License for the specific language governing permissions and
 //	limitations under the License.
+
+// Command mender-cli is the command-line client for the Mender server. It
+// provides login, artifact, device, inventory, terminal, port-forward and
+// file-transfer operations against a Mender deployment.
 package main
 
 import (

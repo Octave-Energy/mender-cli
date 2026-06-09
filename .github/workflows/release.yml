@@ -1,0 +1,139 @@
+name: Release
+run-name: "Release · ${{ github.event.inputs.bump }} bump by @${{ github.actor }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Which version part to bump for this release"
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag, build & publish release artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure release runs from main
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::Releases can only be run from the 'main' branch (got '${GITHUB_REF_NAME}')."
+            exit 1
+          fi
+
+      - name: Check out code
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          # Full history + tags so we can compute the next version and stamp it.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compute next version
+        id: version
+        run: |
+          set -euo pipefail
+          bump="${{ github.event.inputs.bump }}"
+
+          latest="$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n1)"
+          if [ -z "${latest}" ]; then latest="v0.0.0"; fi
+          echo "Latest tag: ${latest}"
+
+          ver="${latest#v}"
+          major="${ver%%.*}"
+          rest="${ver#*.}"
+          minor="${rest%%.*}"
+          patch="${rest#*.}"
+          patch="${patch%%-*}"
+
+          case "${bump}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "::error::unknown bump '${bump}'"; exit 1 ;;
+          esac
+
+          new="v${major}.${minor}.${patch}"
+          echo "Next version: ${new}"
+
+          if git rev-parse "${new}" >/dev/null 2>&1; then
+            echo "::error::tag ${new} already exists"
+            exit 1
+          fi
+
+          echo "version=${new}" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${VERSION}" -m "Release ${VERSION}"
+          git push origin "${VERSION}"
+
+      - name: Build all platforms
+        run: make build-multiplatform VERSION="${{ steps.version.outputs.version }}"
+
+      - name: Package archives
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          package() {
+            local os="$1" arch="$2" ext="$3" kind="$4"
+            local bin="mender-cli.${os}.${arch}${ext}"
+            local name="mender-cli-${VERSION}-${os}-${arch}"
+
+            mkdir -p "${name}"
+            cp "${bin}" "${name}/mender-cli${ext}"
+            cp LICENSE README.md "${name}/" 2>/dev/null || true
+
+            if [ "${kind}" = "zip" ]; then
+              zip -r -q "dist/${name}.zip" "${name}"
+            else
+              tar -czf "dist/${name}.tar.gz" "${name}"
+            fi
+            rm -rf "${name}"
+          }
+
+          package linux   amd64 ""     tar
+          package linux   arm64 ""     tar
+          package darwin  amd64 ""     tar
+          package darwin  arm64 ""     tar
+          package windows amd64 ".exe" zip
+          package windows arm64 ".exe" zip
+
+          ( cd dist && sha256sum ./* > SHA256SUMS.txt )
+          ls -la dist
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS.txt

@@ -1,5 +1,11 @@
 mender-cli
 mender-cli.linux.amd64
 mender-cli.darwin.amd64
+mender-cli.linux.arm64
+mender-cli.darwin.arm64
+mender-cli.windows.amd64.exe
+mender-cli.windows.arm64.exe
 autocomplete/autocomplete*
 vendor
+coverage.txt
+coverage-tmp.txt

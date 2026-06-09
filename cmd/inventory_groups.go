@@ -13,19 +13,14 @@
 //	limitations under the License.
 package cmd
 
-import (
-	"github.com/spf13/cobra"
-)
+import "github.com/spf13/cobra"
 
-var artifactsCmd = &cobra.Command{
-	Use:       "artifacts",
-	Short:     "Operations on mender artifacts.",
-	ValidArgs: []string{"upload", "list", "delete", "download"},
+var inventoryGroupsCmd = &cobra.Command{
+	Use:       "groups",
+	Short:     "Inventory static groups.",
+	ValidArgs: []string{"list"},
 }
 
 func init() {
-	artifactsCmd.AddCommand(artifactUploadCmd)
-	artifactsCmd.AddCommand(artifactsListCmd)
-	artifactsCmd.AddCommand(artifactDeleteCmd)
-	artifactsCmd.AddCommand(artifactDownloadCmd)
+	inventoryGroupsCmd.AddCommand(inventoryGroupsListCmd)
 }

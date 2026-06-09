@@ -15,10 +15,8 @@ package cmd
 
 import (
 	"bufio"
-	"compress/gzip"
 	"context"
-	"encoding/binary"
-	"encoding/gob"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,10 +24,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
-	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 
 	"github.com/mendersoftware/go-lib-micro/ws"
@@ -47,20 +42,39 @@ const (
 	// dummy delay for playback
 	playbackSleep = time.Millisecond * 32
 
+	// sessionMaxDuration bounds how long a remote session (terminal or
+	// port-forward) may stay open before it is closed.
+	sessionMaxDuration = 24 * time.Hour
+
+	// stdinReadSize is the buffer size used when reading from stdin.
+	stdinReadSize = 1024
+
+	// terminalQuitChar is the byte (CTRL+], ASCII GS) that terminates the
+	// interactive session.
+	terminalQuitChar = 29
+
 	// cli args
 	argRecord   = "record"
 	argPlayback = "playback"
 )
 
+const terminalExamples = `  mender-cli terminal 0123456789abcdef0123456789abcdef
+  mender-cli terminal --id 0123456789abcdef0123456789abcdef
+  mender-cli terminal -f hostname=my-gateway
+  mender-cli terminal 0123456789abcdef0123456789abcdef --record session.rec
+  mender-cli terminal --playback session.rec`
+
 var terminalCmd = &cobra.Command{
 	Use:   "terminal [DEVICE_ID]",
-	Short: "Remotely access a terminal on a device",
-	Long: "Remotely access a terminal on a device\n" +
-		"Basic usage is terminal DEVICE_ID, which starts a new terminal " +
-		"session with the remote device. The session can be saved locally " +
-		"using --record flag. When using --playback flag, no DEVICE_ID is " +
-		"required and no connection will be established.",
-	Args: cobra.RangeArgs(0, 1),
+	Short: "Remotely access a terminal on a device.",
+	Long: "Remotely access a terminal on a device.\n\n" +
+		"The target device can be selected with a positional DEVICE_ID, the --id " +
+		"flag, or a --filter expression that matches exactly one device. This " +
+		"starts a new terminal session with the remote device. The session can be " +
+		"saved locally using the --record flag. When using the --playback flag, no " +
+		"device is required and no connection will be established.",
+	Example: terminalExamples,
+	Args:    cobra.RangeArgs(0, 1),
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewTerminalCmd(c, args)
 		CheckErr(err)
@@ -72,6 +86,7 @@ func init() {
 	terminalCmd.Flags().StringP(argRecord, "", "", "recording file path to save the session to")
 	terminalCmd.Flags().
 		StringP(argPlayback, "", "", "recording file path to playback the session from")
+	addDeviceTargetFlags(terminalCmd)
 }
 
 // TerminalCmd handles the terminal command
@@ -92,44 +107,9 @@ type TerminalCmd struct {
 	terminalOutputChan chan []byte
 }
 
-const (
-	deviceIDMaxLength     = 64
-	terminalTypeMaxLength = 32
-	terminalTypeDefault   = "xterm-256color"
-)
-
-type TerminalRecordingHeader struct {
-	Version        uint8
-	DeviceID       [deviceIDMaxLength]byte
-	TerminalType   [terminalTypeMaxLength]byte
-	TerminalWidth  int16
-	TerminalHeight int16
-	Timestamp      int64
-}
-
-const (
-	terminalRecordingVersion = 1
-)
-
-type TerminalRecordingType int8
-
-type TerminalRecordingData struct {
-	Type TerminalRecordingType
-	Data []byte
-}
-
-const (
-	terminalRecordingOutput TerminalRecordingType = iota
-)
-
 // NewTerminalCmd returns a new TerminalCmd
 func NewTerminalCmd(cmd *cobra.Command, args []string) (*TerminalCmd, error) {
-	server := viper.GetString(argRootServer)
-	if server == "" {
-		return nil, errors.New("No server")
-	}
-
-	skipVerify, err := cmd.Flags().GetBool(argRootSkipVerify)
+	server, skipVerify, err := resolveServerConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -149,13 +129,9 @@ func NewTerminalCmd(cmd *cobra.Command, args []string) (*TerminalCmd, error) {
 		return nil, err
 	}
 
-	deviceID := ""
-	if len(args) == 1 {
-		deviceID = args[0]
-	}
-
-	if playbackFile == "" && deviceID == "" {
-		return nil, errors.New("No device specified")
+	deviceID, err := terminalDeviceID(cmd, args, playbackFile, server, token, skipVerify)
+	if err != nil {
+		return nil, err
 	}
 
 	return &TerminalCmd{
@@ -172,13 +148,65 @@ func NewTerminalCmd(cmd *cobra.Command, args []string) (*TerminalCmd, error) {
 	}, nil
 }
 
+// terminalDeviceID resolves the target device from the positional arg, --id, or
+// --filter (at most one of them). A device is required unless a playback file
+// is given.
+func terminalDeviceID(
+	cmd *cobra.Command,
+	args []string,
+	playbackFile, server, token string,
+	skipVerify bool,
+) (string, error) {
+	flags := cmd.Flags()
+	idFlag, err := flags.GetString(argDeviceID)
+	if err != nil {
+		return "", err
+	}
+	filters, err := flags.GetStringSlice(argInventoryFilter)
+	if err != nil {
+		return "", err
+	}
+
+	positional := ""
+	if len(args) == 1 {
+		positional = args[0]
+	}
+
+	sources := 0
+	for _, set := range []bool{positional != "", idFlag != "", len(filters) > 0} {
+		if set {
+			sources++
+		}
+	}
+	if sources > 1 {
+		return "", errors.New("specify only one of DEVICE_ID, --id, or --filter")
+	}
+	if sources == 0 {
+		if playbackFile != "" {
+			return "", nil
+		}
+		return "", errors.New("no device specified")
+	}
+
+	if len(filters) > 0 {
+		if err := validateInventoryFilters(filters); err != nil {
+			return "", err
+		}
+		return resolveDeviceID(server, token, skipVerify, "", filters)
+	}
+	if idFlag != "" {
+		return idFlag, nil
+	}
+	return positional, nil
+}
+
 // send the shell start message
 func (c *TerminalCmd) startShell(client *deviceconnect.Client, termWidth, termHeight int) error {
 	m := &ws.ProtoMsg{
 		Header: ws.ProtoHdr{
 			Proto:   ws.ProtoTypeShell,
 			MsgType: wsshell.MessageTypeSpawnShell,
-			Properties: map[string]interface{}{
+			Properties: map[string]any{
 				"terminal_width":  termWidth,
 				"terminal_height": termHeight,
 			},
@@ -202,109 +230,6 @@ func (c *TerminalCmd) stopShell(client *deviceconnect.Client) error {
 	if err := client.WriteMessage(m); err != nil {
 		return err
 	}
-	return nil
-}
-
-func (c *TerminalCmd) record() {
-	f, err := os.Create(c.recordFile)
-	if err != nil {
-		log.Err(fmt.Sprintf("Can't create recording file: %s: %s", c.recordFile, err.Error()))
-	}
-	defer f.Close()
-
-	fz := gzip.NewWriter(f)
-	defer fz.Close()
-
-	data := TerminalRecordingHeader{
-		Version:        terminalRecordingVersion,
-		Timestamp:      time.Now().Unix(),
-		TerminalWidth:  defaultTermWidth,
-		TerminalHeight: defaultTermHeight,
-	}
-	copy(data.DeviceID[:], []byte(c.deviceID))
-	copy(data.TerminalType[:], []byte(terminalTypeDefault))
-	err = binary.Write(fz, binary.LittleEndian, data)
-	if err != nil {
-		log.Err(fmt.Sprintf("Header write failed: %s", err.Error()))
-	}
-	err = fz.Flush()
-	if err != nil {
-		log.Err(fmt.Sprintf("Header flush failed: %s", err.Error()))
-	}
-
-	log.Info(fmt.Sprintf("Recording to file: %s", c.recordFile))
-
-	e := gob.NewEncoder(fz)
-	for {
-		select {
-		case <-c.stopRecording:
-			return
-		case terminalOutput := <-c.terminalOutputChan:
-			o := TerminalRecordingData{
-				Type: terminalRecordingOutput,
-				Data: terminalOutput,
-			}
-			err = e.Encode(o)
-			fz.Flush()
-			if err != nil {
-				log.Err(fmt.Sprintf("Error encoding %q: %s", string(terminalOutput), err.Error()))
-				return
-			}
-		}
-	}
-}
-
-func (c *TerminalCmd) playback(w io.Writer) error {
-	f, err := os.Open(c.playbackFile)
-	if err != nil {
-		log.Err(fmt.Sprintf("Can't open %s: %s", c.playbackFile, err.Error()))
-		return err
-	}
-	defer f.Close()
-
-	fz, err := gzip.NewReader(f)
-	if err != nil {
-		return err
-	}
-	defer fz.Close()
-
-	var header TerminalRecordingHeader
-	err = binary.Read(fz, binary.LittleEndian, &header)
-	if err != nil {
-		log.Err(fmt.Sprintf("Can't read header: %s", err.Error()))
-		return err
-	}
-
-	dateTime := time.Unix(header.Timestamp, 0)
-
-	log.Info(fmt.Sprintf("Playing back from file: %s", c.playbackFile))
-	log.Info(fmt.Sprintf("Device ID: %s", string(header.DeviceID[:])))
-	log.Info(fmt.Sprintf("Terminal type: %s", string(header.TerminalType[:])))
-	log.Info(fmt.Sprintf("Terminal size: %dx%d", header.TerminalWidth, header.TerminalHeight))
-	log.Info(fmt.Sprintf("Timestamp: %s", dateTime.Format(time.UnixDate)))
-	log.Info("")
-
-	d := gob.NewDecoder(fz)
-	for {
-		var o TerminalRecordingData
-		err = d.Decode(&o)
-		if err != nil {
-			if err != io.EOF {
-				log.Err(fmt.Sprintf("Decoding error: %s", err.Error()))
-				return err
-			}
-			break
-		}
-		if o.Type == terminalRecordingOutput {
-			_, err = w.Write(o.Data)
-			if err != nil {
-				log.Err(fmt.Sprintf("Writting error: %s", err.Error()))
-				return err
-			}
-		}
-		time.Sleep(playbackSleep)
-	}
-	log.Info("\r")
 	return nil
 }
 
@@ -343,15 +268,12 @@ func (c *TerminalCmd) Run() error {
 	client := deviceconnect.NewClient(c.server, c.token, c.skipVerify)
 
 	// check if the device is connected
-	device, err := client.GetDevice(c.deviceID)
-	if err != nil {
-		return errors.Wrap(err, "unable to get the device")
-	} else if device.Status != deviceconnect.CONNECTED {
-		return errors.New("the device is not connected")
+	if err := ensureDeviceConnected(client, c.deviceID); err != nil {
+		return err
 	}
 
 	// connect to the websocket and start the ping-pong connection health-check
-	err = client.Connect(c.deviceID, c.token)
+	err := client.Connect(c.deviceID, c.token)
 	if err != nil {
 		return err
 	}
@@ -363,14 +285,14 @@ func (c *TerminalCmd) Run() error {
 	if term.IsTerminal(termID) {
 		termWidth, termHeight, err = term.GetSize(termID)
 		if err != nil {
-			return errors.Wrap(err, "Unable to get the terminal size")
+			return fmt.Errorf("unable to get the terminal size: %w", err)
 		}
 
 		fmt.Fprintln(os.Stderr, "Press CTRL+] to quit the session")
 
 		oldState, err := term.MakeRaw(termID)
 		if err != nil {
-			return errors.Wrap(err, "Unable to set the terminal in raw mode")
+			return fmt.Errorf("unable to set the terminal in raw mode: %w", err)
 		}
 		defer func() {
 			_ = term.Restore(termID, oldState)
@@ -397,7 +319,8 @@ func (c *TerminalCmd) Run() error {
 	return c.err
 }
 
-// Run executes the command
+// runLoop drives the interactive terminal session: it forwards stdin to the
+// device and device output to stdout until the session ends or ctx is canceled.
 func (c *TerminalCmd) runLoop(
 	ctx context.Context,
 	client *deviceconnect.Client,
@@ -412,19 +335,19 @@ func (c *TerminalCmd) runLoop(
 
 	// handle CTRL+C and signals
 	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, unix.SIGINT, unix.SIGTERM)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	// resize the terminal window
 	go c.resizeTerminal(ctx, msgChan, termID, termWidth, termHeight)
 
-	healthcheckTimeout := time.Now().Add(24 * time.Hour)
+	healthcheckTimeout := time.Now().Add(sessionMaxDuration)
 	for c.running {
 		select {
 		case msg := <-msgChan:
 			err := client.WriteMessage(msg)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				break
+				c.running = false
 			}
 		case healthcheckInterval := <-c.healthcheck:
 			healthcheckTimeout = time.Now().Add(time.Duration(healthcheckInterval) * time.Second)
@@ -448,8 +371,8 @@ func (c *TerminalCmd) resizeTerminal(
 	termHeight int,
 ) {
 	resize := make(chan os.Signal, 1)
-	signal.Notify(resize, syscall.SIGWINCH)
-	defer signal.Stop(resize)
+	stopResize := notifyTerminalResize(ctx, resize)
+	defer stopResize()
 
 	for {
 		select {
@@ -464,7 +387,7 @@ func (c *TerminalCmd) resizeTerminal(
 					Header: ws.ProtoHdr{
 						Proto:   ws.ProtoTypeShell,
 						MsgType: wsshell.MessageTypeResizeShell,
-						Properties: map[string]interface{}{
+						Properties: map[string]any{
 							"terminal_width":  termWidth,
 							"terminal_height": termHeight,
 						},
@@ -487,7 +410,7 @@ func (c *TerminalCmd) Stop() {
 func (c *TerminalCmd) pipeStdin(msgChan chan *ws.ProtoMsg, r io.Reader) {
 	s := bufio.NewReader(r)
 	for c.running {
-		raw := make([]byte, 1024)
+		raw := make([]byte, stdinReadSize)
 		n, err := s.Read(raw)
 		if err != nil {
 			if c.running {
@@ -500,7 +423,7 @@ func (c *TerminalCmd) pipeStdin(msgChan chan *ws.ProtoMsg, r io.Reader) {
 			break
 		}
 		// CTRL+] terminates the session
-		if raw[0] == 29 {
+		if raw[0] == terminalQuitChar {
 			c.Stop()
 			return
 		}
@@ -558,7 +481,7 @@ func (c *TerminalCmd) pipeStdout(
 			m.Header.MsgType == wsshell.MessageTypeSpawnShell {
 			status, ok := m.Header.Properties["status"].(int64)
 			if ok && status == int64(wsshell.ErrorMessage) {
-				c.err = errors.New(fmt.Sprintf("Unable to start the shell: %s", string(m.Body)))
+				c.err = fmt.Errorf("unable to start the shell: %s", string(m.Body))
 				c.Stop()
 			} else {
 				c.sessionID = string(m.Header.SessionID)

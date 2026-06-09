@@ -14,9 +14,14 @@
 
 package deviceconnect
 
+// Device is a device as reported by the deviceconnect API, together with its
+// current connection status.
 type Device struct {
 	ID     string
 	Status string
 }
 
-const CONNECTED = "connected"
+// StatusConnected is the Device.Status value indicating that the device is
+// currently connected and reachable for terminal, port-forward and file
+// transfer operations.
+const StatusConnected = "connected"

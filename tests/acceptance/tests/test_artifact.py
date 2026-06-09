@@ -112,7 +112,7 @@ class TestArtifactUpload:
         )
 
         assert r.returncode != 0
-        expect_output(r.stderr, "FAILURE", "Please Login first")
+        expect_output(r.stderr, "FAILURE", "please login first")
 
 
 class TestArtifactDelete:
@@ -189,7 +189,7 @@ class TestArtifactDelete:
         )
 
         assert r.returncode != 0
-        expect_output(r.stderr, "FAILURE", "Please Login first")
+        expect_output(r.stderr, "FAILURE", "please login first")
 
 
 class TestArtifactDownload:
@@ -257,4 +257,4 @@ class TestArtifactDownload:
         )
 
         assert r.returncode != 0
-        expect_output(r.stderr, "FAILURE", "Please Login first")
+        expect_output(r.stderr, "FAILURE", "please login first")

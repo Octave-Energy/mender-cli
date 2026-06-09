@@ -14,19 +14,17 @@
 package cmd
 
 import (
-	"errors"
-
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	"github.com/mendersoftware/mender-cli/client/deployments"
 	"github.com/mendersoftware/mender-cli/log"
 )
 
 var artifactDeleteCmd = &cobra.Command{
-	Use:   "delete [flags] ARTIFACT_ID",
-	Short: "Delete mender artifact from the Mender server.",
-	Args:  cobra.ExactArgs(1),
+	Use:     "delete [flags] ARTIFACT_ID",
+	Short:   "Delete mender artifact from the Mender server.",
+	Args:    cobra.ExactArgs(1),
+	Example: `  mender-cli artifacts delete 0123456789abcdef0123456789abcdef`,
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewArtifactDeleteCmd(c, args)
 		CheckErr(err)
@@ -37,6 +35,7 @@ var artifactDeleteCmd = &cobra.Command{
 func init() {
 }
 
+// ArtifactDeleteCmd implements `mender-cli artifacts delete`.
 type ArtifactDeleteCmd struct {
 	server     string
 	skipVerify bool
@@ -44,13 +43,9 @@ type ArtifactDeleteCmd struct {
 	token      string
 }
 
+// NewArtifactDeleteCmd validates flags/args and returns a new ArtifactDeleteCmd.
 func NewArtifactDeleteCmd(cmd *cobra.Command, args []string) (*ArtifactDeleteCmd, error) {
-	server := viper.GetString(argRootServer)
-	if server == "" {
-		return nil, errors.New("No server")
-	}
-
-	skipVerify, err := cmd.Flags().GetBool(argRootSkipVerify)
+	server, skipVerify, err := resolveServerConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
