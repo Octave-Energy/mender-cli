@@ -130,15 +130,17 @@ mender-cli
 │   ├── path                    Print the default token storage path
 │   └── clear                   Delete the stored token
 ├── artifacts                   Operations on Mender artifacts
-│   ├── list                    List artifacts (paginated)
+│   ├── list                    List artifacts (filterable)
 │   ├── upload                  Upload an artifact
 │   ├── download                Download an artifact by id
 │   └── delete                  Delete an artifact by id
 ├── devices                     Operations on Mender devices
-│   └── list                    List devices from device auth (paginated)
+│   ├── list                    List devices from device auth
+│   ├── get                     Show one device from device auth (by id or filter)
+│   └── count                   Count devices from device auth (by status)
 ├── inventory                   Device inventory (reported attributes and tags)
 │   ├── devices
-│   │   ├── list                List devices + inventory (auto-paginated)
+│   │   ├── list                List devices + inventory
 │   │   ├── get                 Show one device's inventory (by id or filter)
 │   │   └── count               Count devices matching inventory filters
 │   ├── device-tags             Manage device tags (list/add/set/delete)

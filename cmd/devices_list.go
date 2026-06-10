@@ -14,24 +14,27 @@
 package cmd
 
 import (
-	"errors"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/mendersoftware/mender-cli/client/devices"
 )
 
+// argDeviceStatus filters the device list by authentication status.
+const argDeviceStatus = "status"
+
 var devicesListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Get a list of devices from the Mender server.",
 	Long: "Get a list of devices from the Mender server's device authentication " +
 		"service.\n\n" +
-		"Results are paginated: use --page and --per-page to navigate. (This " +
-		"differs from 'inventory devices list', which transparently returns all " +
-		"matching devices.)",
+		"All matching devices are returned: pagination is handled transparently " +
+		"(like 'inventory devices list'). Use --status to filter by " +
+		"authentication status.",
 	Example: `  mender-cli devices list
   mender-cli devices list --detail 3
-  mender-cli devices list --page 2 --per-page 50
+  mender-cli devices list --status pending
   mender-cli devices list --raw`,
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewDevicesListCmd(c, args)
@@ -42,23 +45,27 @@ var devicesListCmd = &cobra.Command{
 
 func init() {
 	devicesListCmd.Flags().IntP(argDetailLevel, "d", 0, "devices list detail level [0..3]")
-	devicesListCmd.Flags().IntP(argPerPage, "N", 20, "number of results to display")
-	devicesListCmd.Flags().IntP(argPage, "P", 1, "page number to return")
+	devicesListCmd.Flags().String(
+		argDeviceStatus,
+		"",
+		"only devices with this auth status: "+strings.Join(deviceAuthStatuses, ", "),
+	)
+	_ = devicesListCmd.RegisterFlagCompletionFunc(argDeviceStatus, deviceStatusCompletion)
 	devicesListCmd.Flags().BoolP(
 		argRawMode,
 		"r",
 		false,
-		"devices list raw mode (json from mender server)")
+		"output the raw JSON returned by the Mender server")
 }
 
 // DevicesListCmd implements `mender-cli devices list`.
 type DevicesListCmd struct {
-	server        string
-	skipVerify    bool
-	token         string
-	detailLevel   int
-	rawMode       bool
-	page, perPage int
+	server      string
+	skipVerify  bool
+	token       string
+	detailLevel int
+	rawMode     bool
+	status      string
 }
 
 // NewDevicesListCmd validates flags and returns a new DevicesListCmd.
@@ -80,18 +87,12 @@ func NewDevicesListCmd(cmd *cobra.Command, args []string) (*DevicesListCmd, erro
 		return nil, err
 	}
 
-	perPage, err := flags.GetInt(argPerPage)
+	status, err := flags.GetString(argDeviceStatus)
 	if err != nil {
 		return nil, err
 	}
-
-	page, err := flags.GetInt(argPage)
-	if err != nil {
+	if err := validateDeviceStatus(status); err != nil {
 		return nil, err
-	}
-
-	if page <= 0 || perPage <= 0 {
-		return nil, errors.New("page and per-page arguments must be larger than 0")
 	}
 
 	token, err := getAuthToken(cmd)
@@ -105,13 +106,11 @@ func NewDevicesListCmd(cmd *cobra.Command, args []string) (*DevicesListCmd, erro
 		skipVerify:  skipVerify,
 		detailLevel: detailLevel,
 		rawMode:     rawMode,
-		perPage:     perPage,
-		page:        page,
+		status:      status,
 	}, nil
 }
 
 func (c *DevicesListCmd) Run() error {
-
 	client := devices.NewClient(c.server, c.skipVerify)
-	return client.ListDevices(c.token, c.detailLevel, c.perPage, c.page, c.rawMode)
+	return client.ListDevices(c.token, c.detailLevel, c.status, c.rawMode)
 }

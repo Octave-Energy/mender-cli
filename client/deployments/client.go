@@ -78,7 +78,7 @@ type artifactData struct {
 
 const (
 	artifactUploadURL   = "/api/management/v1/deployments/artifacts"
-	artifactsListURL    = "/api/management/v1/deployments/artifacts/list"
+	artifactsListURL    = "/api/management/v2/deployments/artifacts"
 	artifactsDeleteURL  = artifactUploadURL
 	directUploadURL     = "/api/management/v1/deployments/artifacts/directupload"
 	transferCompleteURL = "/api/management/v1/deployments/artifacts/directupload/:id/complete"
@@ -140,54 +140,104 @@ func (c *Client) DirectDownloadLink(token string) (*UploadLink, error) {
 	return &link, nil
 }
 
-func (c *Client) ListArtifacts(token string, detailLevel, perPage, page int, raw bool) error {
+// artifactsAutoPageSize is the per-page batch used when transparently fetching
+// all pages of the paginated artifact list. Pagination is abstracted away from
+// the end user, so this is purely an implementation detail.
+const artifactsAutoPageSize = 500
+
+// ListArtifacts fetches every artifact matching the given filters, following
+// pagination transparently, then renders them at the given detail level. When
+// raw is true the merged JSON array is written verbatim. The filters values are
+// passed through to the server as query parameters (e.g. name, description,
+// device_type, sort).
+func (c *Client) ListArtifacts(token string, detailLevel int, filters url.Values, raw bool) error {
 	if detailLevel > 3 || detailLevel < 0 {
 		return fmt.Errorf("invalid artifact detail")
 	}
 
+	merged, err := c.fetchAllArtifacts(token, filters)
+	if err != nil {
+		return err
+	}
+
+	if raw {
+		body, err := json.Marshal(merged)
+		if err != nil {
+			return fmt.Errorf("encode merged response: %w", err)
+		}
+		if _, err := os.Stdout.Write(body); err != nil {
+			return fmt.Errorf("error writing response body: %w", err)
+		}
+		return nil
+	}
+
+	for _, item := range merged {
+		var a artifactData
+		if err := json.Unmarshal(item, &a); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+		listArtifact(a, detailLevel)
+	}
+	return nil
+}
+
+// fetchAllArtifacts repeatedly GETs the paginated artifact list endpoint,
+// merging every page into a single JSON array. Pagination is driven internally.
+func (c *Client) fetchAllArtifacts(token string, filters url.Values) ([]json.RawMessage, error) {
+	merged := []json.RawMessage{}
+	for page := 1; ; page++ {
+		q := url.Values{}
+		for key, vals := range filters {
+			for _, v := range vals {
+				q.Add(key, v)
+			}
+		}
+		q.Set("page", strconv.Itoa(page))
+		q.Set("per_page", strconv.Itoa(artifactsAutoPageSize))
+
+		batch, err := c.getArtifactsPage(token, q)
+		if err != nil {
+			return nil, err
+		}
+		merged = append(merged, batch...)
+
+		// A short page means we've reached the end.
+		if len(batch) < artifactsAutoPageSize {
+			break
+		}
+	}
+	return merged, nil
+}
+
+func (c *Client) getArtifactsPage(token string, q url.Values) ([]json.RawMessage, error) {
 	req, err := http.NewRequest(http.MethodGet, c.artifactsListURL, nil)
 	if err != nil {
-		return fmt.Errorf("failed to prepare request: %w", err)
+		return nil, fmt.Errorf("failed to prepare request: %w", err)
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	q := url.Values{
-		"per_page": []string{strconv.Itoa(perPage)},
-		"page":     []string{strconv.Itoa(page)},
-	}
 	req.URL.RawQuery = q.Encode()
 
 	reqDump, err := httputil.DumpRequest(req, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	log.Verbf("sending request: \n%s", string(reqDump))
 
 	rsp, err := c.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rsp.Body.Close()
 	if rsp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s request failed with status %d",
+		return nil, fmt.Errorf("GET %s request failed with status %d",
 			req.URL.RequestURI(), rsp.StatusCode)
 	}
 
-	if raw {
-		_, err := io.Copy(os.Stdout, rsp.Body)
-		if err != nil {
-			return fmt.Errorf("error reading response body: %w", err)
-		}
-	} else {
-		var list []artifactData
-		err = json.NewDecoder(rsp.Body).Decode(&list)
-		if err != nil {
-			return err
-		}
-		for _, v := range list {
-			listArtifact(v, detailLevel)
-		}
+	var batch []json.RawMessage
+	if err := json.NewDecoder(rsp.Body).Decode(&batch); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	return nil
+	return batch, nil
 }
 
 func listArtifact(a artifactData, detailLevel int) {

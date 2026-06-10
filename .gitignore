@@ -9,3 +9,4 @@ autocomplete/autocomplete*
 vendor
 coverage.txt
 coverage-tmp.txt
+GAPS.md

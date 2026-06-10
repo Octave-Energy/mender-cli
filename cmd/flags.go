@@ -21,9 +21,6 @@ const (
 	argRawMode = "raw"
 	// argDetailLevel selects how much detail a list/get command prints [0..3].
 	argDetailLevel = "detail"
-	// argPage and argPerPage control pagination on the paginated list commands.
-	argPage    = "page"
-	argPerPage = "per-page"
 	// argWithoutProgress disables the progress bar on transfer commands.
 	argWithoutProgress = "no-progress"
 )

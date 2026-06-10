@@ -14,23 +14,35 @@
 package cmd
 
 import (
-	"errors"
+	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/mendersoftware/mender-cli/client/deployments"
 )
 
+const (
+	argArtifactName       = "name"
+	argArtifactDeviceType = "device-type"
+)
+
 var artifactsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Get a list of artifacts from the Mender server.",
 	Long: "Get a list of artifacts from the Mender server.\n\n" +
-		"Results are paginated: use --page and --per-page to navigate. (This " +
-		"differs from 'inventory devices list', which transparently returns all " +
-		"matching devices.)",
+		"All matching artifacts are returned: pagination is handled " +
+		"transparently (like 'inventory devices list'). Use --name, " +
+		"--description and --device-type to narrow the results. The name, " +
+		"description and device-type filters support prefix matching by " +
+		"appending '*' (e.g. --name 'my-app*'); --name may be repeated to match " +
+		"several exact names (but cannot be combined with a prefix match).",
 	Example: `  mender-cli artifacts list
   mender-cli artifacts list --detail 3
-  mender-cli artifacts list --page 2 --per-page 50
+  mender-cli artifacts list --name my-app --device-type raspberrypi4
+  mender-cli artifacts list --name 'release-*'
+  mender-cli artifacts list --name app-a --name app-b
   mender-cli artifacts list --raw`,
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewArtifactsListCmd(c, args)
@@ -41,23 +53,38 @@ var artifactsListCmd = &cobra.Command{
 
 func init() {
 	artifactsListCmd.Flags().IntP(argDetailLevel, "d", 0, "artifacts list detail level [0..3]")
-	artifactsListCmd.Flags().IntP(argPerPage, "N", 20, "number of results to display")
-	artifactsListCmd.Flags().IntP(argPage, "P", 1, "page number to return")
+	artifactsListCmd.Flags().StringArray(
+		argArtifactName,
+		nil,
+		"filter by artifact name; append '*' for prefix matching; repeat to match several names",
+	)
+	artifactsListCmd.Flags().String(
+		argArtifactDescription,
+		"",
+		"filter by artifact description; append '*' for prefix matching",
+	)
+	artifactsListCmd.Flags().String(
+		argArtifactDeviceType,
+		"",
+		"filter by compatible device type; append '*' for prefix matching",
+	)
 	artifactsListCmd.Flags().BoolP(
 		argRawMode,
 		"r",
 		false,
-		"artifacts list raw mode (json from mender server)")
+		"output the raw JSON returned by the Mender server")
 }
 
 // ArtifactsListCmd implements `mender-cli artifacts list`.
 type ArtifactsListCmd struct {
-	server        string
-	skipVerify    bool
-	token         string
-	detailLevel   int
-	rawMode       bool
-	page, perPage int
+	server      string
+	skipVerify  bool
+	token       string
+	detailLevel int
+	rawMode     bool
+	names       []string
+	description string
+	deviceType  string
 }
 
 // NewArtifactsListCmd validates flags and returns a new ArtifactsListCmd.
@@ -69,7 +96,7 @@ func NewArtifactsListCmd(cmd *cobra.Command, args []string) (*ArtifactsListCmd, 
 
 	flags := cmd.Flags()
 
-	detailLevel, err := cmd.Flags().GetInt(argDetailLevel)
+	detailLevel, err := flags.GetInt(argDetailLevel)
 	if err != nil {
 		return nil, err
 	}
@@ -79,18 +106,22 @@ func NewArtifactsListCmd(cmd *cobra.Command, args []string) (*ArtifactsListCmd, 
 		return nil, err
 	}
 
-	perPage, err := flags.GetInt(argPerPage)
+	names, err := flags.GetStringArray(argArtifactName)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateArtifactNames(names); err != nil {
+		return nil, err
+	}
+
+	description, err := flags.GetString(argArtifactDescription)
 	if err != nil {
 		return nil, err
 	}
 
-	page, err := flags.GetInt(argPage)
+	deviceType, err := flags.GetString(argArtifactDeviceType)
 	if err != nil {
 		return nil, err
-	}
-
-	if page <= 0 || perPage <= 0 {
-		return nil, errors.New("page and per-page arguments must be larger than 0")
 	}
 
 	token, err := getAuthToken(cmd)
@@ -104,13 +135,43 @@ func NewArtifactsListCmd(cmd *cobra.Command, args []string) (*ArtifactsListCmd, 
 		skipVerify:  skipVerify,
 		detailLevel: detailLevel,
 		rawMode:     rawMode,
-		perPage:     perPage,
-		page:        page,
+		names:       names,
+		description: description,
+		deviceType:  deviceType,
 	}, nil
 }
 
+// validateArtifactNames enforces the v2 API constraint that prefix matching
+// (a trailing '*') cannot be combined with multiple --name values.
+func validateArtifactNames(names []string) error {
+	if len(names) <= 1 {
+		return nil
+	}
+	for _, n := range names {
+		if strings.HasSuffix(n, "*") {
+			return fmt.Errorf(
+				"prefix matching (--name %q) cannot be combined with multiple --name values",
+				n,
+			)
+		}
+	}
+	return nil
+}
+
 func (c *ArtifactsListCmd) Run() error {
+	q := url.Values{}
+	for _, n := range c.names {
+		if n != "" {
+			q.Add("name", n)
+		}
+	}
+	if c.description != "" {
+		q.Set("description", c.description)
+	}
+	if c.deviceType != "" {
+		q.Set("device_type", c.deviceType)
+	}
 
 	client := deployments.NewClient(c.server, c.skipVerify)
-	return client.ListArtifacts(c.token, c.detailLevel, c.perPage, c.page, c.rawMode)
+	return client.ListArtifacts(c.token, c.detailLevel, q, c.rawMode)
 }

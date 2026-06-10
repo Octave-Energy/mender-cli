@@ -38,15 +38,17 @@ mender-cli
 │   ├── path                    Print the default token storage path
 │   └── clear                   Delete the stored token
 ├── artifacts                   Operations on Mender artifacts
-│   ├── list                    List artifacts (paginated)
+│   ├── list                    List artifacts (filterable)
 │   ├── upload                  Upload an artifact
 │   ├── download                Download an artifact by id
 │   └── delete                  Delete an artifact by id
 ├── devices                     Operations on Mender devices
-│   └── list                    List devices from device auth (paginated)
+│   ├── list                    List devices from device auth
+│   ├── get                     Show one device from device auth (by id or filter)
+│   └── count                   Count devices from device auth (by status)
 ├── inventory                   Device inventory (reported attributes and tags)
 │   ├── devices
-│   │   ├── list                List devices + inventory (auto-paginated)
+│   │   ├── list                List devices + inventory
 │   │   ├── get                 Show one device's inventory (by id or filter)
 │   │   └── count               Count devices matching inventory filters
 │   ├── device-tags             Manage the tags set on a device
@@ -65,8 +67,8 @@ mender-cli
 
 ## Device targeting
 
-`terminal`, `port-forward`, `cp`, and `inventory devices get` target a single
-device. You can identify the device in one of these ways:
+`terminal`, `port-forward`, `cp`, `devices get`, and `inventory devices get`
+target a single device. You can identify the device in one of these ways:
 
 - `--id <device-id>` — use the device id verbatim.
 - `-f, --filter <expr>` — an inventory filter expression that must match
@@ -171,21 +173,27 @@ Operations on Mender artifacts.
 
 ### artifacts list
 
-List artifacts from the Mender server. Results are **paginated** — use
-`--page`/`--per-page` to navigate. (This differs from `inventory devices list`,
-which transparently returns all matching devices.)
+List artifacts from the Mender server.
+
+The `--name`, `--description` and `--device-type` filters support **prefix
+matching** by appending `*` (e.g. `--name 'my-app*'`). `--name` may be
+**repeated** to match several exact names, but a prefix match cannot be combined
+with multiple names.
 
 | Flag | Description |
 | --- | --- |
 | `-d, --detail <0..3>` | Detail level of the output. |
-| `-P, --page <n>` | Page number to return (default `1`). |
-| `-N, --per-page <n>` | Number of results per page (default `20`). |
+| `--name <name>` | Filter by artifact name; append `*` for prefix matching; repeat to match several names. |
+| `--description <text>` | Filter by artifact description; append `*` for prefix matching. |
+| `--device-type <type>` | Filter by compatible device type; append `*` for prefix matching. |
 | `-r, --raw` | Print the raw JSON returned by the server. |
 
 ```console
 mender-cli artifacts list
 mender-cli artifacts list --detail 3
-mender-cli artifacts list --page 2 --per-page 50
+mender-cli artifacts list --name my-app --device-type raspberrypi4
+mender-cli artifacts list --name 'release-*'
+mender-cli artifacts list --name app-a --name app-b
 mender-cli artifacts list --raw
 ```
 
@@ -246,21 +254,55 @@ Operations on Mender devices.
 
 ### devices list
 
-List devices from the Mender server's device authentication service. Results
-are **paginated** — use `--page`/`--per-page` to navigate.
+List devices from the Mender server's device authentication service. Use
+`--status` to filter by authentication status.
 
 | Flag | Description |
 | --- | --- |
 | `-d, --detail <0..3>` | Detail level of the output. |
-| `-P, --page <n>` | Page number to return (default `1`). |
-| `-N, --per-page <n>` | Number of results per page (default `20`). |
+| `--status <status>` | Only devices with this auth status: `pending`, `accepted`, `rejected`, `preauthorized`, `noauth` (shell completion supported). |
 | `-r, --raw` | Print the raw JSON returned by the server. |
 
 ```console
 mender-cli devices list
 mender-cli devices list --detail 3
-mender-cli devices list --page 2 --per-page 50
+mender-cli devices list --status pending
 mender-cli devices list --raw
+```
+
+### devices get
+
+Show a single device from the Mender server's device authentication service.
+Specify the target with either `--id` or a `--filter` expression that matches
+exactly one device (see [Device targeting](#device-targeting)).
+
+| Flag | Description |
+| --- | --- |
+| `--id <device-id>` | Device id to target (verbatim). |
+| `-f, --filter <expr>` | Filter by attribute; must match exactly one device. |
+| `-d, --detail <0..3>` | Detail level of the output. |
+| `-r, --raw` | Print the raw JSON returned by the server. |
+
+```console
+mender-cli devices get --id 0123456789abcdef0123456789abcdef
+mender-cli devices get --id 0123456789abcdef0123456789abcdef --detail 3
+mender-cli devices get -f hostname=my-gateway
+mender-cli devices get -f inventory/mac=00:11:22:33:44:55 -f tags/env=prod
+```
+
+### devices count
+
+Count devices from the Mender server's device authentication service. This
+efficiently returns only the total number of devices without listing them. Use
+`--status` to count only devices with a given authentication status.
+
+| Flag | Description |
+| --- | --- |
+| `--status <status>` | Only devices with this auth status: `pending`, `accepted`, `rejected`, `preauthorized`, `noauth` (shell completion supported). |
+
+```console
+mender-cli devices count
+mender-cli devices count --status pending
 ```
 
 ---
@@ -271,10 +313,7 @@ Device inventory: reported attributes and tags.
 
 ### inventory devices list
 
-Get devices and their reported inventory (attributes, tags). **All matching
-devices are returned** — pagination is handled transparently, so there are no
-`--page`/`--per-page` flags (unlike `devices list` and `artifacts list`). Use
-`--filter` to narrow the results.
+Get devices and their reported inventory (attributes, tags). Use `--filter` to narrow the results.
 
 | Flag | Description |
 | --- | --- |
