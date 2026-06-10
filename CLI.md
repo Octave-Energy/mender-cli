@@ -49,6 +49,14 @@ mender-cli
 ├── releases                    Operations on Mender releases
 │   ├── list                    List releases (filterable)
 │   └── get                     Show one release by name
+├── deployments                 Operations on Mender deployments
+│   ├── list                    List deployments (filterable)
+│   ├── count                   Count deployments (filterable)
+│   ├── search                  Find deployments by targeted group or device
+│   ├── get                     Show one deployment by id
+│   ├── stats                   Show per-status device counts for a deployment
+│   ├── devices                 List a deployment's devices and status
+│   └── log                     Show a device's deployment log
 ├── inventory                   Device inventory (reported attributes and tags)
 │   ├── devices
 │   │   ├── list                List devices + inventory
@@ -316,9 +324,7 @@ Operations on Mender releases (groups of artifacts that share a release name).
 
 ### releases list
 
-List releases from the Mender server. **All matching releases are returned** —
-pagination is handled transparently (like `inventory devices list`), so there
-are no `--page`/`--per-page` flags. Use the filter flags to narrow the results.
+List releases from the Mender server. Use the filter flags to narrow the results.
 
 | Flag | Description |
 | --- | --- |
@@ -353,6 +359,153 @@ Mender server, selected by its name with `--name`.
 mender-cli releases get --name my-app-v1.0.0
 mender-cli releases get --name my-app-v1.0.0 --detail 2
 mender-cli releases get --name my-app-v1.0.0 --raw
+```
+
+---
+
+## deployments
+
+List and inspect Mender deployments, and fetch per-device deployment logs
+(useful for CI debugging).
+
+### deployments list
+
+List deployments from the Mender server. Use the filter flags to narrow the results.
+
+| Flag | Description |
+| --- | --- |
+| `-d, --detail <0..3>` | Detail level of the output (higher levels add artifacts and statistics). |
+| `--id <id>` | Filter by deployment id; repeat to match several. |
+| `--name <name>` | Filter by deployment name; repeat to match several. |
+| `--status <status>` | Filter by status: `inprogress`, `finished`, `pending` (shell completion supported). |
+| `--type <type>` | Filter by type: `software`, `configuration` (shell completion supported). |
+| `--created-before <unix>` | Only deployments created before this Unix timestamp (UTC). |
+| `--created-after <unix>` | Only deployments created after this Unix timestamp (UTC). |
+| `--sort <dir>` | Sort by creation date: `asc`, `desc` (shell completion supported). |
+| `-r, --raw` | Print the raw JSON returned by the server. |
+
+```console
+mender-cli deployments list
+mender-cli deployments list --status inprogress
+mender-cli deployments list --name production --type software
+mender-cli deployments list --sort desc --detail 2
+mender-cli deployments list --raw
+```
+
+### deployments count
+
+Count deployments without listing them: the total is read from the server's
+`X-Total-Count` header, so only a single result is transferred. Accepts the same
+filters as `deployments list` (except `--sort`).
+
+| Flag | Description |
+| --- | --- |
+| `--id <id>` | Filter by deployment id; repeat to match several. |
+| `--name <name>` | Filter by deployment name; repeat to match several. |
+| `--status <status>` | Filter by status: `inprogress`, `finished`, `pending` (shell completion supported). |
+| `--type <type>` | Filter by type: `software`, `configuration` (shell completion supported). |
+| `--created-before <unix>` | Only deployments created before this Unix timestamp (UTC). |
+| `--created-after <unix>` | Only deployments created after this Unix timestamp (UTC). |
+
+```console
+mender-cli deployments count
+mender-cli deployments count --status inprogress
+mender-cli deployments count --type software
+```
+
+### deployments search
+
+Find deployments by who they target. Provide **exactly one** targeting mode:
+`--group` (a static group name), `--device` (a device id, verbatim), or
+`-f/--filter` (inventory attributes that must resolve to exactly one device,
+the same syntax and single-match enforcement as `devices get --filter`).
+
+Matching is done against each deployment's **declared targeting** — its
+`groups` list and its inventory filter `terms`. A device that is targeted only
+implicitly through a group deployment is therefore not matched by `--device`
+(the deployment records the group, not the individual device id). Use
+`--status`/`--type` to narrow the scan.
+
+| Flag | Description |
+| --- | --- |
+| `--group <name>` | Match deployments targeting this static group. |
+| `--device <id>` | Match deployments targeting this device id (verbatim). |
+| `-f, --filter <expr>` | Resolve a single device from inventory attributes (`name=value` or `scope/name=value`, scope defaults to `inventory`; repeat `-f` for multiple), then match deployments targeting it. Must match exactly one device. |
+| `--status <status>` | Narrow the scan by status: `inprogress`, `finished`, `pending` (shell completion supported). |
+| `--type <type>` | Narrow the scan by type: `software`, `configuration` (shell completion supported). |
+| `-d, --detail <0..3>` | Detail level of the output. |
+| `-r, --raw` | Print the raw JSON returned by the server. |
+
+```console
+mender-cli deployments search --group edgebox-PROD
+mender-cli deployments search --device 2bf0f1ab-cd52-4b74-af6e-ce46e8b9f4a4
+mender-cli deployments search --filter mac=00:11:22:33:44:55
+mender-cli deployments search --group edgebox-PROD --status inprogress --detail 2
+```
+
+### deployments get
+
+Show a single deployment from the Mender server, selected by its id with
+`--id`.
+
+| Flag | Description |
+| --- | --- |
+| `--id <id>` | Deployment id to fetch (verbatim). Required. |
+| `-d, --detail <0..3>` | Detail level of the output (higher levels add artifacts and statistics). |
+| `-r, --raw` | Print the raw JSON returned by the server. |
+
+```console
+mender-cli deployments get --id 00a0c91e6-7dec-11d0-a765-f81d4faebf6
+mender-cli deployments get --id 00a0c91e6-7dec-11d0-a765-f81d4faebf6 --detail 2
+mender-cli deployments get --id 00a0c91e6-7dec-11d0-a765-f81d4faebf6 --raw
+```
+
+### deployments stats
+
+Show the number of devices in each state for a single deployment, selected by
+its id with `--id`.
+
+| Flag | Description |
+| --- | --- |
+| `--id <id>` | Deployment id (verbatim). Required. |
+| `-r, --raw` | Print the raw JSON returned by the server. |
+
+```console
+mender-cli deployments stats --id 00a0c91e6-7dec-11d0-a765-f81d4faebf6
+mender-cli deployments stats --id 00a0c91e6-7dec-11d0-a765-f81d4faebf6 --raw
+```
+
+### deployments devices
+
+List the devices that are part of a deployment, together with their per-device
+status, selected with `--id`. **All matching devices are returned** — pagination
+is handled transparently.
+
+| Flag | Description |
+| --- | --- |
+| `--id <id>` | Deployment id (verbatim). Required. |
+| `--status <status>` | Filter by per-device status, e.g. `success`, `failure`, `pending`, `downloading`, `installing`, `rebooting`, `pause`, `active`, `finished` (shell completion supported). |
+| `-d, --detail <0..3>` | Detail level of the output (higher levels add state/substate and artifact info). |
+| `-r, --raw` | Print the raw JSON returned by the server. |
+
+```console
+mender-cli deployments devices --id 00a0c91e6-7dec-11d0-a765-f81d4faebf6
+mender-cli deployments devices --id 00a0c91e6-7dec-11d0-a765-f81d4faebf6 --status failure
+mender-cli deployments devices --id 00a0c91e6-7dec-11d0-a765-f81d4faebf6 --detail 2
+```
+
+### deployments log
+
+Print the deployment log (text) of a single device within a deployment. Select
+the deployment with `--id` and the device with `--device`.
+
+| Flag | Description |
+| --- | --- |
+| `--id <id>` | Deployment id (verbatim). Required. |
+| `--device <id>` | Device id (verbatim). Required. |
+
+```console
+mender-cli deployments log --id 00a0c91e6-7dec-11d0-a765-f81d4faebf6 --device 0123456789abcdef0123456789abcdef
 ```
 
 ---

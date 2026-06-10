@@ -141,6 +141,14 @@ mender-cli
 ├── releases                    Operations on Mender releases
 │   ├── list                    List releases (filterable)
 │   └── get                     Show one release by name
+├── deployments                 Operations on Mender deployments
+│   ├── list                    List deployments (filterable)
+│   ├── count                   Count deployments (filterable)
+│   ├── search                  Find deployments by targeted group or device
+│   ├── get                     Show one deployment by id
+│   ├── stats                   Show per-status device counts for a deployment
+│   ├── devices                 List a deployment's devices and status
+│   └── log                     Show a device's deployment log
 ├── inventory                   Device inventory (reported attributes and tags)
 │   ├── devices
 │   │   ├── list                List devices + inventory

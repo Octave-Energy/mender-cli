@@ -46,9 +46,7 @@ var inventoryDevicesListCmd = &cobra.Command{
 	Short: "Get devices and reported inventory (attributes, tags) from the Mender server.",
 	Long: "Get devices and their reported inventory (attributes, tags) from the " +
 		"Mender server.\n\n" +
-		"All matching devices are returned: pagination is handled transparently, " +
-		"so there are no --page/--per-page flags (unlike 'devices list' and " +
-		"'artifacts list'). Use --filter to narrow the results.",
+		"All matching devices are returned. Use --filter to narrow the results.",
 	Example: inventoryDevicesListExamples,
 	Run: func(c *cobra.Command, args []string) {
 		cmd, err := NewInventoryDevicesListCmd(c, args)

@@ -96,6 +96,7 @@ type Client struct {
 	artifactDeleteURL   string
 	directUploadURL     string
 	client              *http.Client
+	output              io.Writer
 }
 
 type Link struct {
@@ -121,6 +122,7 @@ func NewClient(url string, skipVerify bool) *Client {
 		artifactDeleteURL:   client.JoinURL(url, artifactsDeleteURL),
 		directUploadURL:     client.JoinURL(url, directUploadURL),
 		client:              client.NewHTTPClient(skipVerify),
+		output:              os.Stdout,
 	}
 }
 

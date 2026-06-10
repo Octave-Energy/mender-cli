@@ -73,7 +73,7 @@ var rootCmd = &cobra.Command{
 		}
 	},
 	ValidArgs: []string{
-		"artifacts", "cp", "devices", "help", "inventory", "login",
+		"artifacts", "cp", "deployments", "devices", "help", "inventory", "login",
 		"port-forward", "releases", "terminal", "token", "version",
 	},
 }
@@ -135,6 +135,7 @@ func init() {
 	rootCmd.AddCommand(devicesCmd)
 	rootCmd.AddCommand(inventoryCmd)
 	rootCmd.AddCommand(releasesCmd)
+	rootCmd.AddCommand(deploymentsCmd)
 	rootCmd.AddCommand(terminalCmd)
 	rootCmd.AddCommand(portForwardCmd)
 	rootCmd.AddCommand(fileTransferCmd)
