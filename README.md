@@ -138,6 +138,9 @@ mender-cli
 │   ├── list                    List devices from device auth
 │   ├── get                     Show one device from device auth (by id or filter)
 │   └── count                   Count devices from device auth (by status)
+├── releases                    Operations on Mender releases
+│   ├── list                    List releases (filterable)
+│   └── get                     Show one release by name
 ├── inventory                   Device inventory (reported attributes and tags)
 │   ├── devices
 │   │   ├── list                List devices + inventory

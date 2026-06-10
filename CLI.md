@@ -46,6 +46,9 @@ mender-cli
 │   ├── list                    List devices from device auth
 │   ├── get                     Show one device from device auth (by id or filter)
 │   └── count                   Count devices from device auth (by status)
+├── releases                    Operations on Mender releases
+│   ├── list                    List releases (filterable)
+│   └── get                     Show one release by name
 ├── inventory                   Device inventory (reported attributes and tags)
 │   ├── devices
 │   │   ├── list                List devices + inventory
@@ -303,6 +306,53 @@ efficiently returns only the total number of devices without listing them. Use
 ```console
 mender-cli devices count
 mender-cli devices count --status pending
+```
+
+---
+
+## releases
+
+Operations on Mender releases (groups of artifacts that share a release name).
+
+### releases list
+
+List releases from the Mender server. **All matching releases are returned** —
+pagination is handled transparently (like `inventory devices list`), so there
+are no `--page`/`--per-page` flags. Use the filter flags to narrow the results.
+
+| Flag | Description |
+| --- | --- |
+| `-d, --detail <0..3>` | Detail level of the output (higher levels list the release's artifacts). |
+| `--name <name>` | Filter by release name. |
+| `--tag <tag>` | Filter by release tag; repeat to match any of several tags (OR). |
+| `--update-type <type>` | Filter by update type. |
+| `--sort <field:dir>` | Sort results: `name:asc`, `name:desc`, `modified:asc`, `modified:desc`, `artifacts_count:asc`, `artifacts_count:desc`, `tags:asc`, `tags:desc` (shell completion supported). |
+| `-r, --raw` | Print the raw JSON returned by the server. |
+
+```console
+mender-cli releases list
+mender-cli releases list --detail 2
+mender-cli releases list --name my-app
+mender-cli releases list --tag stable --tag qa
+mender-cli releases list --update-type rootfs-image --sort modified:desc
+mender-cli releases list --raw
+```
+
+### releases get
+
+Show a single release (a group of artifacts sharing a release name) from the
+Mender server, selected by its name with `--name`.
+
+| Flag | Description |
+| --- | --- |
+| `--name <name>` | Release name to fetch (verbatim). Required. |
+| `-d, --detail <0..3>` | Detail level of the output (higher levels list the release's artifacts). |
+| `-r, --raw` | Print the raw JSON returned by the server. |
+
+```console
+mender-cli releases get --name my-app-v1.0.0
+mender-cli releases get --name my-app-v1.0.0 --detail 2
+mender-cli releases get --name my-app-v1.0.0 --raw
 ```
 
 ---
