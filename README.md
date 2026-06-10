@@ -141,6 +141,7 @@ mender-cli
 │   │   ├── list                List devices + inventory (auto-paginated)
 │   │   ├── get                 Show one device's inventory (by id or filter)
 │   │   └── count               Count devices matching inventory filters
+│   ├── device-tags             Manage device tags (list/add/set/delete)
 │   └── groups
 │       └── list                List inventory static group names
 ├── terminal                    Remote terminal session on a device

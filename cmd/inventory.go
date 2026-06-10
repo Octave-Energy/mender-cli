@@ -23,4 +23,5 @@ var inventoryCmd = &cobra.Command{
 func init() {
 	inventoryCmd.AddCommand(inventoryDevicesCmd)
 	inventoryCmd.AddCommand(inventoryGroupsCmd)
+	inventoryCmd.AddCommand(inventoryDeviceTagsCmd)
 }

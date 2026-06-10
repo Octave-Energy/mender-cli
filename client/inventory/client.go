@@ -18,6 +18,7 @@
 package inventory
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mendersoftware/mender-cli/client"
@@ -48,6 +50,16 @@ type ListResponse struct {
 	Body       []byte
 	TotalCount string
 	Link       string
+	// ETag is the device object's current ETag (only meaningful for the
+	// single-device inventory endpoint, and only reflects the 'tags' scope).
+	ETag string
+}
+
+// Tag is an inventory attribute in the "tags" scope.
+type Tag struct {
+	Name        string `json:"name"`
+	Value       string `json:"value"`
+	Description string `json:"description,omitempty"`
 }
 
 // Client talks to the Mender inventory API.
@@ -233,5 +245,73 @@ func (c *Client) doGetExpectOK(token, fullURL, pathForErrors string) (*ListRespo
 		Body:       body,
 		TotalCount: rsp.Header.Get("X-Total-Count"),
 		Link:       rsp.Header.Get("Link"),
+		ETag:       rsp.Header.Get("ETag"),
 	}, nil
+}
+
+func (c *Client) deviceTagsURL(deviceID string) string {
+	path := fmt.Sprintf("%s/devices/%s/tags", inventoryAPIPrefix, url.PathEscape(deviceID))
+	return client.JoinURL(c.server, path)
+}
+
+// ReplaceDeviceTags performs PUT /api/management/v1/inventory/devices/{id}/tags,
+// replacing the device's entire set of tags with the given list (tags not
+// present are removed). When etag is non-empty it is sent as If-Match for
+// optimistic concurrency control.
+func (c *Client) ReplaceDeviceTags(token, deviceID, etag string, tags []Tag) error {
+	return c.writeDeviceTags(token, http.MethodPut, deviceID, etag, tags)
+}
+
+// UpsertDeviceTags performs PATCH /api/management/v1/inventory/devices/{id}/tags,
+// adding or overwriting the given tags without touching the others. When etag
+// is non-empty it is sent as If-Match.
+func (c *Client) UpsertDeviceTags(token, deviceID, etag string, tags []Tag) error {
+	return c.writeDeviceTags(token, http.MethodPatch, deviceID, etag, tags)
+}
+
+func (c *Client) writeDeviceTags(token, method, deviceID, etag string, tags []Tag) error {
+	// The API requires a JSON array; ensure an empty set serializes as [] and
+	// not null (e.g. when deleting the last remaining tag via PUT).
+	if tags == nil {
+		tags = []Tag{}
+	}
+	payload, err := json.Marshal(tags)
+	if err != nil {
+		return fmt.Errorf("encode tags: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(
+		ctx, method, c.deviceTagsURL(deviceID), bytes.NewReader(payload),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	if etag != "" {
+		req.Header.Set("If-Match", etag)
+	}
+
+	rsp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s request failed: %w", method, err)
+	}
+	defer rsp.Body.Close()
+
+	switch rsp.StatusCode {
+	case http.StatusOK, http.StatusNoContent:
+		return nil
+	case http.StatusPreconditionFailed:
+		return fmt.Errorf("device tags changed concurrently (ETag mismatch); please retry")
+	default:
+		body, _ := io.ReadAll(rsp.Body)
+		return fmt.Errorf(
+			"%s %s/devices/%s/tags failed with status %d: %s",
+			method, inventoryAPIPrefix, deviceID, rsp.StatusCode,
+			strings.TrimSpace(string(body)),
+		)
+	}
 }

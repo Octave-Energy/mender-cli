@@ -49,6 +49,11 @@ mender-cli
 │   │   ├── list                List devices + inventory (auto-paginated)
 │   │   ├── get                 Show one device's inventory (by id or filter)
 │   │   └── count               Count devices matching inventory filters
+│   ├── device-tags             Manage the tags set on a device
+│   │   ├── list                List all tags set on a device
+│   │   ├── add                 Add a new tag to a device
+│   │   ├── set                 Change the value of an existing tag
+│   │   └── delete              Delete a tag from a device
 │   └── groups
 │       └── list                List inventory static group names
 ├── terminal                    Remote terminal session on a device
@@ -341,6 +346,38 @@ mender-cli inventory groups list
 mender-cli inventory groups list --raw
 mender-cli inventory groups list --status accepted --raw
 ```
+
+### inventory device-tags
+
+Manage the tags (tags-scope inventory attributes) on a single device. Every
+subcommand targets one device with `--id` or a `--filter` expression that
+matches exactly one device (see [Device targeting](#device-targeting)).
+
+Tag *reading* is also available through `inventory devices get`/`list` (tags
+appear with a `[tags]` scope prefix); this group adds tag mutation.
+
+| Subcommand | Description |
+| --- | --- |
+| `list` | List all tags set on the device (`-r/--raw` for JSON). |
+| `add NAME=VALUE` | Add a new tag. Fails if the tag already exists. |
+| `set NAME=VALUE` | Change an existing tag's value. Fails if the tag does not exist. |
+| `delete NAME` | Delete a tag. Fails if the tag is not set. |
+
+`add` and `set` accept an optional `--description <text>` for the tag's
+human-readable description. On `set`, omitting `--description` preserves the
+existing description; passing it (even empty, `--description ""`) overwrites it.
+
+```console
+mender-cli inventory device-tags list --id 0123456789abcdef0123456789abcdef
+mender-cli inventory device-tags add environment=production --id 0123456789abcdef0123456789abcdef
+mender-cli inventory device-tags add owner=ops --description "owning team" --id 0123456789abcdef0123456789abcdef
+mender-cli inventory device-tags set environment=staging -f hostname=my-gateway
+mender-cli inventory device-tags delete environment --id 0123456789abcdef0123456789abcdef
+```
+
+Writes use the device's `ETag` for optimistic concurrency: if the device's tags
+change between the read and the write, the command fails with a conflict error
+and can be retried.
 
 ---
 
